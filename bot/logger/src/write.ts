@@ -1,0 +1,70 @@
+import {
+  KafkaConfig,
+  KafkaConfigOpt,
+  defaultValues,
+  FileConfig,
+  FileConfigOpt,
+} from '@twitch-stats/config';
+import pino, { Logger } from 'pino';
+import { Kafka, Consumer } from 'kafkajs';
+import { ArgumentConfig, parse } from 'ts-command-line-args';
+import rfs from 'rotating-file-stream';
+
+interface WriterConfig {
+  topic: string;
+  filename: string;
+}
+
+const WriterConfigOpt: ArgumentConfig<WriterConfig> = {
+  topic: { type: String, defaultValue: defaultValues.streamsTopic },
+  filename: { type: String },
+};
+
+interface Config extends WriterConfig, KafkaConfig, FileConfig {}
+
+const logger: Logger = pino({ level: 'debug' }).child({ module: 'log-writer' });
+
+const config: Config = parse<Config>(
+  {
+    ...KafkaConfigOpt,
+    ...WriterConfigOpt,
+    ...FileConfigOpt,
+  },
+  {
+    loadFromFileArg: 'config',
+  }
+);
+
+const kafka: Kafka = new Kafka({
+  clientId: config.kafkaClientId,
+  brokers: config.kafkaBroker,
+});
+logger.info({ topic: config.topic }, 'subscribe');
+const consumer: Consumer = kafka.consumer({ groupId: 'stream-log' });
+await consumer.connect();
+await consumer.subscribe({ topic: config.topic, fromBeginning: true });
+
+const out: rfs.RotatingFileStream = rfs.createStream(config.filename, {
+  interval: '1d',
+  maxFiles: 10,
+});
+
+await consumer.run({
+  eachMessage: async ({ message }) => {
+    if (message.value) {
+      logger.info(
+        {
+          message: JSON.parse(message.value.toString()),
+        },
+        'msg received'
+      );
+      out.write(
+        JSON.stringify({
+          time: message.timestamp,
+          data: JSON.parse(message.value.toString()),
+        })
+      );
+      out.write('\n');
+    }
+  },
+});
