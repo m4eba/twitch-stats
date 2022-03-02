@@ -454,35 +454,43 @@
     // }
     {
       "packageName": "@twitch-stats/config",
-      "projectFolder": "libraries/config"
+      "projectFolder": "libraries/config",
+      "shouldPublish": true
     },
     {
       "packageName": "@twitch-stats/twitch",
-      "projectFolder": "libraries/twitch"
+      "projectFolder": "libraries/twitch",
+      "shouldPublish": true
     },
     {
       "packageName": "@twitch-stats/database",
-      "projectFolder": "libraries/database"
+      "projectFolder": "libraries/database",
+      "shouldPublish": true
     },
     {
       "packageName": "@twitch-stats/streams",
-      "projectFolder": "bot/streams"
+      "projectFolder": "bot/streams",
+      "shouldPublish": true
     },
     {
       "packageName": "@twitch-stats/streams-id",
-      "projectFolder": "bot/streams-id"
+      "projectFolder": "bot/streams-id",
+      "shouldPublish": true
     },
     {
       "packageName": "@twitch-stats/streams-process",
-      "projectFolder": "bot/streams-process"
+      "projectFolder": "bot/streams-process",
+      "shouldPublish": true
     },
     {
       "packageName": "@twitch-stats/missing",
-      "projectFolder": "bot/missing"
+      "projectFolder": "bot/missing",
+      "shouldPublish": true
     },
     {
       "packageName": "@twitch-stats/logger",
-      "projectFolder": "bot/logger"
+      "projectFolder": "bot/logger",
+      "shouldPublish": true
     },
     {
       "packageName": "@twitch-stats/node-rig",
