@@ -8,7 +8,8 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "build": "heft build"
+    "build": "heft build",
+    "start": "node dist/write.js"
   },
   "devDependencies": {
     "@rushstack/heft": "~0.44.2",
