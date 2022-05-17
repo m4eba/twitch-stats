@@ -6,8 +6,7 @@ import { parse } from 'ts-command-line-args';
 const FetcherConfigOpt = {
     topic: {
         type: String,
-        multiple: true,
-        defaultValue: [defaultValues.streamsTopic],
+        defaultValue: defaultValues.streamsTopic,
     },
     minViewers: { type: Number, defaultValue: 5 },
 };
@@ -55,22 +54,20 @@ do {
     if (result.data.length > 0) {
         log.info({ viewer_count: result.data[result.data.length - 1].viewer_count }, 'viewer_count');
         const messages = [];
-        for (let i = 0; i < config.topic.length; ++i) {
-            const value = {
-                streams: result.data,
-            };
-            const topicMessage = {
-                topic: config.topic[i],
-                messages: [
-                    {
-                        key: 'stream',
-                        value: JSON.stringify(value),
-                        timestamp: time.getTime().toString(),
-                    },
-                ],
-            };
-            messages.push(topicMessage);
-        }
+        const value = {
+            streams: result.data,
+        };
+        const topicMessage = {
+            topic: config.topic,
+            messages: [
+                {
+                    key: 'stream',
+                    value: JSON.stringify(value),
+                    timestamp: time.getTime().toString(),
+                },
+            ],
+        };
+        messages.push(topicMessage);
         log.debug({ size: messages.length }, 'sending batch');
         await producer.sendBatch({ topicMessages: messages });
     }
@@ -87,18 +84,16 @@ do {
                 update: true,
             },
         };
-        for (let i = 0; i < config.topic.length; ++i) {
-            messages.push({
-                topic: config.topic[i],
-                messages: [
-                    {
-                        key: 'stream',
-                        value: JSON.stringify(value),
-                        timestamp: time.getTime().toString(),
-                    },
-                ],
-            });
-        }
+        messages.push({
+            topic: config.topic,
+            messages: [
+                {
+                    key: 'stream',
+                    value: JSON.stringify(value),
+                    timestamp: time.getTime().toString(),
+                },
+            ],
+        });
         await producer.sendBatch({ topicMessages: messages });
         break;
     }

@@ -7,8 +7,7 @@ const FetcherConfigOpt = {
     fromTopic: { type: String, defaultValue: defaultValues.streamsIdTopic },
     toTopic: {
         type: String,
-        multiple: true,
-        defaultValue: [defaultValues.streamsTopic],
+        defaultValue: defaultValues.streamsTopic,
     },
 };
 const config = parse({
@@ -20,7 +19,7 @@ const config = parse({
 }, {
     loadFromFileArg: 'config',
 });
-async function query(logger, topics, ids, producer) {
+async function query(logger, topic, ids, producer) {
     const time = new Date();
     const messages = [];
     while (ids.length > 0) {
@@ -36,22 +35,20 @@ async function query(logger, topics, ids, producer) {
             logger.debug({ count: streams.data.length }, 'result count');
         }
         if (streams.data && streams.data.length > 0) {
-            for (let i = 0; i < topics.length; ++i) {
-                const value = {
-                    streams: streams.data,
-                };
-                const topicMessage = {
-                    topic: topics[i],
-                    messages: [
-                        {
-                            key: 'stream',
-                            value: JSON.stringify(value),
-                            timestamp: time.getTime().toString(),
-                        },
-                    ],
-                };
-                messages.push(topicMessage);
-            }
+            const value = {
+                streams: streams.data,
+            };
+            const topicMessage = {
+                topic,
+                messages: [
+                    {
+                        key: 'stream',
+                        value: JSON.stringify(value),
+                        timestamp: time.getTime().toString(),
+                    },
+                ],
+            };
+            messages.push(topicMessage);
         }
     }
     await producer.sendBatch({ topicMessages: messages });

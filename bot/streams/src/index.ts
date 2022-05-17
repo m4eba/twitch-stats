@@ -21,15 +21,14 @@ import { Kafka, Producer, TopicMessages } from 'kafkajs';
 import { parse, ArgumentConfig } from 'ts-command-line-args';
 
 interface FetcherConfig {
-  topic: string[];
+  topic: string;
   minViewers: number;
 }
 
 const FetcherConfigOpt: ArgumentConfig<FetcherConfig> = {
   topic: {
     type: String,
-    multiple: true,
-    defaultValue: [defaultValues.streamsTopic],
+    defaultValue: defaultValues.streamsTopic,
   },
   minViewers: { type: Number, defaultValue: 5 },
 };
@@ -99,22 +98,21 @@ do {
     );
 
     const messages: TopicMessages[] = [];
-    for (let i: number = 0; i < config.topic.length; ++i) {
-      const value: StreamsMessage = {
-        streams: result.data,
-      };
-      const topicMessage: TopicMessages = {
-        topic: config.topic[i],
-        messages: [
-          {
-            key: 'stream',
-            value: JSON.stringify(value),
-            timestamp: time.getTime().toString(),
-          },
-        ],
-      };
-      messages.push(topicMessage);
-    }
+    const value: StreamsMessage = {
+      streams: result.data,
+    };
+    const topicMessage: TopicMessages = {
+      topic: config.topic,
+      messages: [
+        {
+          key: 'stream',
+          value: JSON.stringify(value),
+          timestamp: time.getTime().toString(),
+        },
+      ],
+    };
+    messages.push(topicMessage);
+
     log.debug({ size: messages.length }, 'sending batch');
     await producer.sendBatch({ topicMessages: messages });
   }
@@ -133,18 +131,18 @@ do {
         update: true,
       },
     };
-    for (let i: number = 0; i < config.topic.length; ++i) {
-      messages.push({
-        topic: config.topic[i],
-        messages: [
-          {
-            key: 'stream',
-            value: JSON.stringify(value),
-            timestamp: time.getTime().toString(),
-          },
-        ],
-      });
-    }
+
+    messages.push({
+      topic: config.topic,
+      messages: [
+        {
+          key: 'stream',
+          value: JSON.stringify(value),
+          timestamp: time.getTime().toString(),
+        },
+      ],
+    });
+
     await producer.sendBatch({ topicMessages: messages });
     break;
   }

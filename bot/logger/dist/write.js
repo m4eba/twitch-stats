@@ -6,6 +6,16 @@ import rfs from 'rotating-file-stream';
 const WriterConfigOpt = {
     topic: { type: String, defaultValue: defaultValues.streamsTopic },
     filename: { type: String },
+    rotateInterval: {
+        type: String,
+        defaultValue: '1d',
+        description: 'interval the log file rotates (see https://github.com/iccicci/rotating-file-stream)',
+    },
+    rotateMaxfiles: {
+        type: Number,
+        defaultValue: 10,
+        description: 'maximal number of log files',
+    },
 };
 const logger = pino({ level: 'debug' }).child({ module: 'log-writer' });
 const config = parse({

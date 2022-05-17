@@ -23,15 +23,14 @@ import { parse, ArgumentConfig } from 'ts-command-line-args';
 
 interface FetcherConfig {
   fromTopic: string;
-  toTopic: string[];
+  toTopic: string;
 }
 
 const FetcherConfigOpt: ArgumentConfig<FetcherConfig> = {
   fromTopic: { type: String, defaultValue: defaultValues.streamsIdTopic },
   toTopic: {
     type: String,
-    multiple: true,
-    defaultValue: [defaultValues.streamsTopic],
+    defaultValue: defaultValues.streamsTopic,
   },
 };
 
@@ -57,7 +56,7 @@ const config: Config = parse<Config>(
 
 async function query(
   logger: Logger,
-  topics: string[],
+  topic: string,
   ids: string[],
   producer: Producer
 ): Promise<void> {
@@ -81,22 +80,20 @@ async function query(
       logger.debug({ count: streams.data.length }, 'result count');
     }
     if (streams.data && streams.data.length > 0) {
-      for (let i = 0; i < topics.length; ++i) {
-        const value: StreamsMessage = {
-          streams: streams.data,
-        };
-        const topicMessage: TopicMessages = {
-          topic: topics[i],
-          messages: [
-            {
-              key: 'stream',
-              value: JSON.stringify(value),
-              timestamp: time.getTime().toString(),
-            },
-          ],
-        };
-        messages.push(topicMessage);
-      }
+      const value: StreamsMessage = {
+        streams: streams.data,
+      };
+      const topicMessage: TopicMessages = {
+        topic,
+        messages: [
+          {
+            key: 'stream',
+            value: JSON.stringify(value),
+            timestamp: time.getTime().toString(),
+          },
+        ],
+      };
+      messages.push(topicMessage);
     }
   }
 
