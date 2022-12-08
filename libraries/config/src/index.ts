@@ -32,6 +32,9 @@ export interface PostgresConfig {
   pgDatabase: string;
   pgUser: string;
   pgPassword: string;
+  pgCa?: string;
+  pgKey?: string;
+  pgCert?: string;
 }
 
 export const PostgresConfigOpt: ArgumentConfig<PostgresConfig> = {
@@ -40,6 +43,9 @@ export const PostgresConfigOpt: ArgumentConfig<PostgresConfig> = {
   pgDatabase: { type: String },
   pgUser: { type: String, defaultValue: 'postgres' },
   pgPassword: { type: String },
+  pgCa: { type: String, optional: true },
+  pgKey: { type: String, optional: true },
+  pgCert: { type: String, optional: true },
 };
 
 export interface FileConfig {

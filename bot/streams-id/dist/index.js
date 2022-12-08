@@ -21,8 +21,8 @@ const config = parse({
 });
 async function query(logger, topic, ids, producer) {
     const time = new Date();
-    const messages = [];
     while (ids.length > 0) {
+        const messages = [];
         const params = ids.splice(0, 100);
         logger.debug({ ids: params }, 'user ids');
         const urlParams = new URLSearchParams();
@@ -50,8 +50,8 @@ async function query(logger, topic, ids, producer) {
             };
             messages.push(topicMessage);
         }
+        await producer.sendBatch({ topicMessages: messages });
     }
-    await producer.sendBatch({ topicMessages: messages });
 }
 await init(config);
 const logger = pino({ level: config.logLevel }).child({

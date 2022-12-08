@@ -61,9 +61,9 @@ async function query(
   producer: Producer
 ): Promise<void> {
   const time = new Date();
-  const messages: TopicMessages[] = [];
 
   while (ids.length > 0) {
+    const messages: TopicMessages[] = [];
     const params = ids.splice(0, 100);
     logger.debug({ ids: params }, 'user ids');
     const urlParams = new URLSearchParams();
@@ -95,9 +95,8 @@ async function query(
       };
       messages.push(topicMessage);
     }
+    await producer.sendBatch({ topicMessages: messages });
   }
-
-  await producer.sendBatch({ topicMessages: messages });
 }
 
 await init(config);

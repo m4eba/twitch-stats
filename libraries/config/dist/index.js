@@ -18,6 +18,9 @@ export const PostgresConfigOpt = {
     pgDatabase: { type: String },
     pgUser: { type: String, defaultValue: 'postgres' },
     pgPassword: { type: String },
+    pgCa: { type: String, optional: true },
+    pgKey: { type: String, optional: true },
+    pgCert: { type: String, optional: true },
 };
 export const FileConfigOpt = {
     config: { type: String, optional: true },

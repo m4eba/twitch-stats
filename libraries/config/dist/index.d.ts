@@ -15,6 +15,9 @@ export interface PostgresConfig {
     pgDatabase: string;
     pgUser: string;
     pgPassword: string;
+    pgCa?: string;
+    pgKey?: string;
+    pgCert?: string;
 }
 export declare const PostgresConfigOpt: ArgumentConfig<PostgresConfig>;
 export interface FileConfig {
