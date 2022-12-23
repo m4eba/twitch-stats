@@ -58,8 +58,8 @@ await consumer.connect();
 await consumer.subscribe({ topic: config.topic, fromBeginning: true });
 
 const out: rfs.RotatingFileStream = rfs.createStream(config.filename, {
-  interval: '1d',
-  maxFiles: 10,
+  interval: config.rotateInterval,
+  maxFiles: config.rotateMaxfiles,
 });
 
 await consumer.run({
