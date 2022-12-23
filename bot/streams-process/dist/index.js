@@ -1,7 +1,6 @@
 import { KafkaConfigOpt, defaultValues, TwitchConfigOpt, PostgresConfigOpt, FileConfigOpt, LogConfigOpt, } from '@twitch-stats/config';
 import { init } from '@twitch-stats/twitch';
-import pg from 'pg';
-const { Pool } = pg;
+import { initPostgres } from '@twitch-stats/database';
 import pino from 'pino';
 import { Kafka } from 'kafkajs';
 import { parse } from 'ts-command-line-args';
@@ -24,13 +23,7 @@ const logger = pino({ level: config.logLevel }).child({
     module: 'streams-process',
 });
 await init(config);
-const pool = new Pool({
-    host: config.pgHost,
-    port: config.pgPort,
-    database: config.pgDatabase,
-    user: config.pgUser,
-    password: config.pgPassword,
-});
+const pool = await initPostgres(config);
 const kafka = new Kafka({
     clientId: config.kafkaClientId,
     brokers: config.kafkaBroker,
@@ -44,6 +37,7 @@ const processing = new Processing(logger, pool, producer, config.streamIdTopic);
 await consumer.run({
     eachMessage: async ({ message }) => {
         try {
+            logger.trace({ message }, 'message received');
             if (!message.value) {
                 logger.error({ message }, 'no message value');
                 return;
@@ -62,6 +56,9 @@ await consumer.run({
         }
         catch (e) {
             logger.error({ error: e }, 'error in eachMessage');
+            console.log(e);
+            logger.flush();
+            process.exit();
         }
     },
 });

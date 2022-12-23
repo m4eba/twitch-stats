@@ -8,7 +8,7 @@ import pg from 'pg';
 const logger: Logger = initLogger('database-init');
 
 // see https://github.com/brianc/node-postgres/issues/811#issuecomment-488374261
-pg.types.setTypeParser(1700, function (val) {
+pg.types.setTypeParser(1700, function (val: string) {
   return parseFloat(val);
 });
 
@@ -20,6 +20,14 @@ export async function initPostgres(config: PostgresConfig): Promise<Pool> {
     port: config.pgPort,
     database: config.pgDatabase,
   };
+  if (config.pgUseSsl) {
+    c.ssl = true;
+  }
+  if (config.pgCa) {
+    c.ssl = {
+      ca: await fs.promises.readFile(config.pgCa, { encoding: 'utf8' }),
+    };
+  }
   if (config.pgCa && config.pgCert && config.pgKey) {
     c.ssl = {
       ca: await fs.promises.readFile(config.pgCa, { encoding: 'utf8' }),

@@ -1,14 +1,13 @@
-import { KafkaConfigOpt, FileConfigOpt, PostgresConfigOpt, TwitchConfigOpt, LogConfigOpt, } from '@twitch-stats/config';
+import { KafkaConfigOpt, FileConfigOpt, PostgresConfigOpt, TwitchConfigOpt, LogConfigOpt, defaultValues, } from '@twitch-stats/config';
 import { init } from '@twitch-stats/twitch';
-import pg from 'pg';
-const { Pool } = pg;
+import { initPostgres } from '@twitch-stats/database';
 import { createClient } from 'redis';
 import pino from 'pino';
 import { Kafka } from 'kafkajs';
 import { parse } from 'ts-command-line-args';
 import Missing from './missing.js';
 const MissingConfigOpt = {
-    topic: { type: String },
+    topic: { type: String, defaultValue: defaultValues.streamsTopic },
     redisUrl: { type: String },
 };
 const config = parse({
@@ -24,13 +23,7 @@ const config = parse({
 const logger = pino({ level: config.logLevel }).child({
     module: 'missing',
 });
-const pool = new Pool({
-    host: config.pgHost,
-    port: config.pgPort,
-    database: config.pgDatabase,
-    user: config.pgUser,
-    password: config.pgPassword,
-});
+const pool = await initPostgres(config);
 const kafka = new Kafka({
     clientId: config.kafkaClientId,
     brokers: config.kafkaBroker,

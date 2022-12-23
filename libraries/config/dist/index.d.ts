@@ -15,6 +15,7 @@ export interface PostgresConfig {
     pgDatabase: string;
     pgUser: string;
     pgPassword: string;
+    pgUseSsl: boolean;
     pgCa?: string;
     pgKey?: string;
     pgCert?: string;

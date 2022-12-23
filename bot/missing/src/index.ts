@@ -9,10 +9,11 @@ import {
   TwitchConfigOpt,
   LogConfig,
   LogConfigOpt,
+  defaultValues,
 } from '@twitch-stats/config';
 import { init, StreamsMessage } from '@twitch-stats/twitch';
-import pg from 'pg';
-const { Pool } = pg;
+import type { Pool } from 'pg';
+import { initPostgres } from '@twitch-stats/database';
 import { createClient } from 'redis';
 import pino, { Logger } from 'pino';
 import { Kafka, Consumer } from 'kafkajs';
@@ -25,7 +26,7 @@ interface MissingConfig {
 }
 
 const MissingConfigOpt: ArgumentConfig<MissingConfig> = {
-  topic: { type: String },
+  topic: { type: String, defaultValue: defaultValues.streamsTopic },
   redisUrl: { type: String },
 };
 
@@ -55,13 +56,8 @@ const logger: Logger = pino({ level: config.logLevel }).child({
   module: 'missing',
 });
 
-const pool: pg.Pool = new Pool({
-  host: config.pgHost,
-  port: config.pgPort,
-  database: config.pgDatabase,
-  user: config.pgUser,
-  password: config.pgPassword,
-});
+const pool: Pool = await initPostgres(config);
+
 const kafka: Kafka = new Kafka({
   clientId: config.kafkaClientId,
   brokers: config.kafkaBroker,
