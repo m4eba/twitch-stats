@@ -33,7 +33,7 @@ export default class Missing {
     async insertIds(values) {
         let idx = 0;
         while (idx < values.length) {
-            const command = values.slice(idx, Math.min(values.length - idx, 1000));
+            const command = values.slice(idx, idx + Math.min(values.length - idx, 1000));
             idx = idx + command.length;
             await this.redis.mSet(command);
         }
