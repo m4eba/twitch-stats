@@ -2,6 +2,12 @@
   "name": "@twitch-stats/streams",
   "entries": [
     {
+      "version": "0.0.7",
+      "tag": "@twitch-stats/streams_v0.0.7",
+      "date": "Fri, 06 Jan 2023 20:46:27 GMT",
+      "comments": {}
+    },
+    {
       "version": "0.0.6",
       "tag": "@twitch-stats/streams_v0.0.6",
       "date": "Fri, 06 Jan 2023 18:44:52 GMT",
