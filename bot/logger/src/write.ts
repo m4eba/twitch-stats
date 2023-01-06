@@ -8,7 +8,7 @@ import {
 import pino, { Logger } from 'pino';
 import { Kafka, Consumer } from 'kafkajs';
 import { ArgumentConfig, parse } from 'ts-command-line-args';
-import { FileWriter } from './FileWriter';
+import { FileWriter } from './FileWriter.js';
 
 interface WriterConfig {
   topic: string;

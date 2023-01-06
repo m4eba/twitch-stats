@@ -2,7 +2,7 @@ import { KafkaConfigOpt, defaultValues, FileConfigOpt, } from '@twitch-stats/con
 import pino from 'pino';
 import { Kafka } from 'kafkajs';
 import { parse } from 'ts-command-line-args';
-import { FileWriter } from './FileWriter';
+import { FileWriter } from './FileWriter.js';
 const WriterConfigOpt = {
     topic: { type: String, defaultValue: defaultValues.streamsTopic },
     path: { type: String },
