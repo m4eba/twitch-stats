@@ -27,6 +27,9 @@
     "pino": "~7.8.0",
     "kafkajs": "~1.16.0",
     "ts-command-line-args": "~2.2.1",
-    "rotating-file-stream": "~3.0.3"
+    "aws-sdk": "~2.1289.0",
+    "luxon": "~3.2.1",
+    "@types/luxon": "~3.2.0",
+    "@twitch-stats/utils": "workspace:*"
   }
 }
