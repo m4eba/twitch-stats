@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@twitch-stats/streams-id",
+      "comment": "",
+      "type": "none"
+    }
+  ],
+  "packageName": "@twitch-stats/streams-id"
+}

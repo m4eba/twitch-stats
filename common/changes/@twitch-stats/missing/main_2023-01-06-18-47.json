@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@twitch-stats/missing",
+      "comment": "",
+      "type": "none"
+    }
+  ],
+  "packageName": "@twitch-stats/missing"
+}

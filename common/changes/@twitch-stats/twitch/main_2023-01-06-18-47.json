@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@twitch-stats/twitch",
+      "comment": "",
+      "type": "none"
+    }
+  ],
+  "packageName": "@twitch-stats/twitch"
+}

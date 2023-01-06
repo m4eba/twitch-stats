@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@twitch-stats/logger",
+      "comment": "",
+      "type": "none"
+    }
+  ],
+  "packageName": "@twitch-stats/logger"
+}
