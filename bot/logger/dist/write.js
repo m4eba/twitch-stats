@@ -27,10 +27,7 @@ const out = new FileWriter(config.path);
 await consumer.run({
     eachMessage: async ({ message }) => {
         if (message.value) {
-            out.write(JSON.stringify({
-                time: message.timestamp,
-                data: message.value.toString(),
-            }));
+            out.write(`{"time":"${message.timestamp}","data":${message.value.toString()}}`);
         }
     },
 });

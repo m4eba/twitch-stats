@@ -41,7 +41,7 @@ export class FileWriter {
         const month = timestamp.substring(5, 7);
         const day = timestamp.substring(8, 10);
         this.lastDay = day;
-        this.filename = `${year}${month}${day}.txt`;
+        this.filename = `${year}-${month}-${day}.txt`;
         this.out = fs.createWriteStream(path.join(this.folder, this.filename), {
             flags: 'a',
         });
