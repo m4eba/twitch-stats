@@ -52,10 +52,23 @@ export default class Missing {
         new_ids = new_ids.slice(0, idx);
         return new_ids;
     }
-    async initRedis() {
-        let user_update = await this.redis.get(Prefix.user + 'time');
+    async getTimeFromRedis(prefix) {
+        let user_update = await this.redis.get(prefix + 'time');
+        try {
+            if (user_update) {
+                user_update = new Date(Date.parse(user_update)).toISOString();
+            }
+        }
+        catch (e) {
+            user_update = null;
+        }
         if (!user_update)
             user_update = '1900-01-01';
+        return user_update;
+    }
+    async initRedis() {
+        const user_update = await this.getTimeFromRedis(Prefix.user);
+        console.log('user update', user_update);
         const users = await this.pool.query({
             text: 'select user_id, created_at from streamers where created_at > $1 order by created_at desc',
             values: [user_update],
@@ -66,9 +79,8 @@ export default class Missing {
             await this.redis.set(Prefix.user + 'time', users.rows[0][1]);
         }
         // don't have created column, use updated
-        let game_update = await this.redis.get(Prefix.game + 'time');
-        if (!game_update)
-            game_update = '1900-01-01';
+        const game_update = await this.getTimeFromRedis(Prefix.game);
+        console.log('game update', game_update);
         const games = await this.pool.query({
             text: 'select game_id, updated_at from game where updated_at > $1 order by updated_at desc',
             values: [game_update],
@@ -79,9 +91,8 @@ export default class Missing {
             await this.redis.set(Prefix.game + 'time', games.rows[0][1]);
         }
         // don't have created column, use updated
-        let tag_update = await this.redis.get(Prefix.tag + 'time');
-        if (!tag_update)
-            tag_update = '1900-01-01';
+        const tag_update = await this.getTimeFromRedis(Prefix.tag);
+        console.log('tag update', tag_update);
         const tags = await this.pool.query({
             text: 'select tag_id, updated_at from tags where updated_at > $1 order by updated_at desc',
             values: [tag_update],
@@ -96,6 +107,7 @@ export default class Missing {
     async update(streams) {
         if (streams.length === 0)
             return;
+        console.log(streams);
         const user_ids = new Array(streams.length);
         const game_ids = [];
         const tag_ids = [];
@@ -138,6 +150,7 @@ export default class Missing {
                 urlParams.append('id', params[i]);
             }
             const users = await helix(`users?${urlParams.toString()}`, null);
+            console.log('insert update streamers', time);
             await insertUpdateStreamers(this.pool, users.data, time);
             await insertViewsProbes(this.pool, users.data, time);
         }
@@ -155,6 +168,7 @@ export default class Missing {
                 urlParams.append('id', params[i]);
             }
             const games = await helix(`games?${urlParams.toString()}`, null);
+            console.log('insert update games', time);
             await insertUpdateGames(this.pool, games.data, time);
         }
         await this.insertIds(values);
@@ -171,6 +185,7 @@ export default class Missing {
                 urlParams.append('tag_id', params[i]);
             }
             const tags = await helix(`tags/streams?${urlParams.toString()}`, null);
+            console.log('insert update tags', time);
             await insertUpdateTags(this.pool, tags.data, time);
         }
         await this.insertIds(values);
