@@ -1,6 +1,6 @@
 {
   "name": "@twitch-stats/logger",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "bin": {
     "write": "dist/write.js",
     "read": "dist/read.js"
