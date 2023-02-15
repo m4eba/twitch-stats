@@ -68,7 +68,6 @@ export default class Missing {
     }
     async initRedis() {
         const user_update = await this.getTimeFromRedis(Prefix.user);
-        console.log('user update', user_update);
         const users = await this.pool.query({
             text: 'select user_id, created_at from streamers where created_at > $1 order by created_at desc',
             values: [user_update],
@@ -80,7 +79,6 @@ export default class Missing {
         }
         // don't have created column, use updated
         const game_update = await this.getTimeFromRedis(Prefix.game);
-        console.log('game update', game_update);
         const games = await this.pool.query({
             text: 'select game_id, updated_at from game where updated_at > $1 order by updated_at desc',
             values: [game_update],
@@ -92,7 +90,6 @@ export default class Missing {
         }
         // don't have created column, use updated
         const tag_update = await this.getTimeFromRedis(Prefix.tag);
-        console.log('tag update', tag_update);
         const tags = await this.pool.query({
             text: 'select tag_id, updated_at from tags where updated_at > $1 order by updated_at desc',
             values: [tag_update],
@@ -107,7 +104,6 @@ export default class Missing {
     async update(streams) {
         if (streams.length === 0)
             return;
-        console.log(streams);
         const user_ids = new Array(streams.length);
         const game_ids = [];
         const tag_ids = [];
