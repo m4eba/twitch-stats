@@ -80,35 +80,11 @@ const updateStreamer = async () => {
     });
     return promise;
 };
-const updateTags = async () => {
-    const promise = new Promise((resolve) => {
-        const query = new QueryStream('SELECT tag_id from tags');
-        const stream = client.query(query);
-        let ids = [];
-        stream.on('end', async () => {
-            await updateRedis(ids);
-            resolve();
-        });
-        stream.on('data', async (chunk) => {
-            ids.push(Prefix.tag + chunk.tag_id);
-            ids.push(chunk.tag_id);
-            if (ids.length === config.batchSize * 2) {
-                const batch = [...ids];
-                ids = [];
-                await updateRedis(batch);
-            }
-        });
-    });
-    return promise;
-};
 await updateStreamer();
 logger.info({ count }, 'streamer count');
 count = 0;
 await updateGames();
 logger.info({ count }, 'game count');
-count = 0;
-await updateTags();
-logger.info({ count }, 'tag count');
 count = 0;
 await redis.disconnect();
 await client.end();

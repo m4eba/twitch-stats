@@ -6,15 +6,8 @@ import {
   insertUpdateStreamers,
   insertViewsProbes,
   insertUpdateGames,
-  insertUpdateTags,
 } from '@twitch-stats/database';
-import type {
-  Game,
-  Tag,
-  User,
-  Stream,
-  PaginatedResult,
-} from '@twitch-stats/twitch';
+import type { Game, User, Stream, PaginatedResult } from '@twitch-stats/twitch';
 import Prefix from './prefix.js';
 
 export default class Missing {
@@ -74,7 +67,9 @@ export default class Missing {
   }
 
   public async checkIds(prefix: string, ids: string[]): Promise<string[]> {
+    if (ids.length === 0) return [];
     const a = this.addPrefix(prefix, ids);
+    this.log.info({ prefix, ids, arguments: a }, 'checkIdx');
     const existing_ids = await this.redis.mGet(a);
     let new_ids = new Array<string>(ids.length);
     let idx = 0;
@@ -97,13 +92,14 @@ export default class Missing {
     } catch (e) {
       user_update = null;
     }
-    if (!user_update) user_update = '1900-01-01';
+    if (!user_update) user_update = '1970-01-01T00:00:00.000Z';
     return user_update;
   }
 
   public async initRedis(): Promise<void> {
     const user_update = await this.getTimeFromRedis(Prefix.user);
 
+    this.log.info({ update: user_update }, 'initRedis update user from');
     const users = await this.pool.query({
       text: 'select user_id, created_at from streamers where created_at > $1 order by created_at desc',
       values: [user_update],
@@ -118,6 +114,7 @@ export default class Missing {
     // don't have created column, use updated
     const game_update = await this.getTimeFromRedis(Prefix.game);
 
+    this.log.info({ update: game_update }, 'initRedis update games from');
     const games = await this.pool.query({
       text: 'select game_id, updated_at from game where updated_at > $1 order by updated_at desc',
       values: [game_update],
@@ -129,20 +126,6 @@ export default class Missing {
       await this.redis.set(Prefix.game + 'time', games.rows[0][1]);
     }
 
-    // don't have created column, use updated
-    const tag_update = await this.getTimeFromRedis(Prefix.tag);
-
-    const tags = await this.pool.query({
-      text: 'select tag_id, updated_at from tags where updated_at > $1 order by updated_at desc',
-      values: [tag_update],
-      rowMode: 'array',
-    });
-
-    await this.insertIds(this.valuesFromQueryResult(Prefix.tag, tags));
-    if (tags.rows.length > 0) {
-      await this.redis.set(Prefix.tag + 'time', tags.rows[0][1]);
-    }
-
     this.log.info({}, 'initialized');
   }
 
@@ -150,9 +133,7 @@ export default class Missing {
     if (streams.length === 0) return;
     const user_ids: string[] = new Array(streams.length);
     const game_ids: string[] = [];
-    const tag_ids: string[] = [];
     const game_hash = new Set<string>();
-    const tag_hash = new Set<string>();
 
     for (let i = 0; i < streams.length; ++i) {
       user_ids[i] = streams[i].user_id;
@@ -161,23 +142,20 @@ export default class Missing {
         game_ids.push(gid);
         game_hash.add(gid);
       }
-      if (streams[i].tag_ids) {
-        streams[i].tag_ids.forEach((tag) => {
-          if (!tag_hash.has(tag)) {
-            tag_ids.push(tag);
-            tag_hash.add(tag);
-          }
-        });
-      }
     }
 
     const checked_user_ids = await this.checkIds(Prefix.user, user_ids);
     const checked_game_ids = await this.checkIds(Prefix.game, game_ids);
-    const checked_tag_ids = await this.checkIds(Prefix.tag, tag_ids);
+    this.log.trace(
+      {
+        number_user: checked_user_ids.length,
+        number_game: checked_game_ids.length,
+      },
+      'update length'
+    );
     await Promise.all([
       this.updateUser(checked_user_ids),
       this.updateGame(checked_game_ids),
-      this.updateTag(checked_tag_ids),
     ]);
   }
 
@@ -225,27 +203,5 @@ export default class Missing {
     }
     await this.insertIds(values);
     await this.redis.set(Prefix.game + 'time', time.toISOString());
-  }
-
-  public async updateTag(ids: string[]): Promise<void> {
-    const time = new Date();
-    const new_ids = [...ids];
-    const values = this.valuesFromArray(Prefix.tag, new_ids);
-
-    while (new_ids.length > 0) {
-      const params = new_ids.splice(0, 100);
-      const urlParams = new URLSearchParams();
-      for (let i = 0; i < params.length; ++i) {
-        urlParams.append('tag_id', params[i]);
-      }
-      const tags = await helix<PaginatedResult<Tag>>(
-        `tags/streams?${urlParams.toString()}`,
-        null
-      );
-      console.log('insert update tags', time);
-      await insertUpdateTags(this.pool, tags.data, time);
-    }
-    await this.insertIds(values);
-    await this.redis.set(Prefix.tag + 'time', time.toISOString());
   }
 }

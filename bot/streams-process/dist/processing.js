@@ -177,7 +177,7 @@ export default class Processing {
             d.id,
             d.user_id,
             d.title,
-            d.tag_ids ? d.tag_ids.join(',') : '',
+            d.tags,
             this.assureGameId(d.game_id),
             d.started_at,
             time,
@@ -205,19 +205,17 @@ export default class Processing {
             return Promise.resolve();
         const tags = [];
         data.forEach((d) => {
-            if (d.tag_ids === null)
+            if (!d.tags)
                 return;
-            d.tag_ids.forEach((t) => {
-                tags.push({
-                    stream_id: d.id,
-                    tag_id: t,
-                });
+            tags.push({
+                stream_id: d.id,
+                tag: d.tags,
             });
         });
         if (tags.length === 0)
             return Promise.resolve();
-        const insert = buildMultiInsert('INSERT INTO stream_tags (stream_id,tag_id,time) VALUES ', '$1,$2,$3', tags, (d) => [d.stream_id, d.tag_id, time]);
-        insert.text += ' ON CONFLICT (stream_id, tag_id,time) DO NOTHING';
+        const insert = buildMultiInsert('INSERT INTO stream_tags (stream_id,tag,time) VALUES ', '$1,$2,$3', tags, (d) => [d.stream_id, d.tag, time]);
+        insert.text += ' ON CONFLICT (stream_id, tag, time) DO NOTHING';
         return this.query(insert);
     }
     async splitNewAndOld(data) {
@@ -270,7 +268,8 @@ export default class Processing {
             if (d.game_id !== split.query[d.id].game_id) {
                 result.game.push(d);
             }
-            if ((d.tag_ids ? d.tag_ids.join(',') : '') !== split.query[d.id].tags) {
+            const dbtag = split.query[d.id].tags;
+            if ((d.tags ? d.tags.join(',') : '') !== (dbtag ? dbtag.join(',') : '')) {
                 result.tags.push(d);
             }
         }

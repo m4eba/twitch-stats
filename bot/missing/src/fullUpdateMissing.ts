@@ -167,39 +167,25 @@ const updateGame: Update = new Update(
   missing,
   missing.updateGame.bind(missing)
 );
-const updateTag: Update = new Update(
-  logger.child({ module: 'tag' }),
-  Prefix.tag,
-  missing,
-  missing.updateTag.bind(missing)
-);
 
 let rowCount: number = 0;
 const query = async (): Promise<void> => {
   const promise = new Promise<void>((resolve) => {
-    const query = new QueryStream('SELECT user_id,game_id,tags from stream');
+    const query = new QueryStream('SELECT user_id,game_id from stream');
     const stream = client.query(query);
 
     stream.on('end', async () => {
       await updateUser.checkIds(true);
       await updateGame.update();
-      await updateTag.update();
       resolve();
     });
 
     stream.on('data', async (chunk) => {
       rowCount++;
       stream.pause();
-      const tagPromises: Array<Promise<void>> = [];
-      if (chunk.tags) {
-        chunk.tags
-          .split(',')
-          .forEach((t: string) => tagPromises.push(updateTag.add(t)));
-      }
       await Promise.all([
         updateUser.add(chunk.user_id),
         updateGame.add(chunk.game_id),
-        tagPromises,
       ]);
       stream.resume();
     });
@@ -212,7 +198,6 @@ await query();
 logger.info({ count: rowCount }, 'result row count');
 logger.info({ count: updateUser.count }, 'streamer count');
 logger.info({ count: updateGame.count }, 'game count');
-logger.info({ count: updateTag.count }, 'tag count');
 
 await redis.disconnect();
 await client.end();

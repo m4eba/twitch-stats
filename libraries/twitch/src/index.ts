@@ -26,7 +26,7 @@ export interface Stream {
   started_at: string;
   language: string;
   thumbnail_url: string;
-  tag_ids: Array<string>;
+  tags: Array<string>;
 }
 
 export interface Game {

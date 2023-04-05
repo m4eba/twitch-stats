@@ -15,16 +15,16 @@ interface UserOnlineRow {
   last_update: string;
 }
 
-interface StreamIdTagId {
+interface StreamIdTag {
   stream_id: string;
-  tag_id: string;
+  tag: string[];
 }
 
 interface DBStream {
   stream_id: string;
   user_id: string;
   title: string;
-  tags: string;
+  tags?: string[];
   game_id: string;
   started_at: string;
   ended_at: string;
@@ -270,7 +270,7 @@ export default class Processing {
         d.id,
         d.user_id,
         d.title,
-        d.tag_ids ? d.tag_ids.join(',') : '',
+        d.tags,
         this.assureGameId(d.game_id),
         d.started_at,
         time,
@@ -310,24 +310,22 @@ export default class Processing {
 
   private async insertStreamsTags(data: Stream[], time: Date): Promise<void> {
     if (data.length === 0) return Promise.resolve();
-    const tags: StreamIdTagId[] = [];
+    const tags: StreamIdTag[] = [];
     data.forEach((d: Stream) => {
-      if (d.tag_ids === null) return;
-      d.tag_ids.forEach((t) => {
-        tags.push({
-          stream_id: d.id,
-          tag_id: t,
-        });
+      if (!d.tags) return;
+      tags.push({
+        stream_id: d.id,
+        tag: d.tags,
       });
     });
     if (tags.length === 0) return Promise.resolve();
-    const insert = buildMultiInsert<StreamIdTagId>(
-      'INSERT INTO stream_tags (stream_id,tag_id,time) VALUES ',
+    const insert = buildMultiInsert<StreamIdTag>(
+      'INSERT INTO stream_tags (stream_id,tag,time) VALUES ',
       '$1,$2,$3',
       tags,
-      (d: StreamIdTagId) => [d.stream_id, d.tag_id, time]
+      (d: StreamIdTag) => [d.stream_id, d.tag, time]
     );
-    insert.text += ' ON CONFLICT (stream_id, tag_id,time) DO NOTHING';
+    insert.text += ' ON CONFLICT (stream_id, tag, time) DO NOTHING';
 
     return this.query(insert);
   }
@@ -385,7 +383,8 @@ export default class Processing {
       if (d.game_id !== split.query[d.id].game_id) {
         result.game.push(d);
       }
-      if ((d.tag_ids ? d.tag_ids.join(',') : '') !== split.query[d.id].tags) {
+      const dbtag = split.query[d.id].tags;
+      if ((d.tags ? d.tags.join(',') : '') !== (dbtag ? dbtag.join(',') : '')) {
         result.tags.push(d);
       }
     }
