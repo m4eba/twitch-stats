@@ -1,6 +1,11 @@
 # Change Log - @twitch-stats/config
 
-This log was last generated on Wed, 15 Feb 2023 21:18:10 GMT and should not be manually modified.
+This log was last generated on Wed, 05 Apr 2023 07:45:43 GMT and should not be manually modified.
+
+## 0.0.9
+Wed, 05 Apr 2023 07:45:43 GMT
+
+_Version update only_
 
 ## 0.0.8
 Wed, 15 Feb 2023 21:18:10 GMT
