@@ -8,18 +8,18 @@
     "build": "tsc"
   },
   "devDependencies": {
-    
+    "@twitch-stats/config-eslint-custom": "*",
+    "@twitch-stats/config-tsconfig": "*",
     "@types/node": "~17.0.18",
-    
     "@types/pg": "~8.6.4",
     "eslint": "~8.10.0"
   },
   "dependencies": {
-    "typescript": "~4.5.5",
-    "pino": "~7.8.0",
-    "pg": "~8.7.3",
-    "@twitch-stats/twitch": "*",
     "@twitch-stats/config": "*",
-    "@twitch-stats/utils": "*"
+    "@twitch-stats/twitch": "*",
+    "@twitch-stats/utils": "*",
+    "pg": "~8.7.3",
+    "pino": "~7.8.0",
+    "typescript": "^5.1.3"
   }
 }

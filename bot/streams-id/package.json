@@ -9,18 +9,18 @@
     "start": "node dist/index.js"
   },
   "devDependencies": {
-    
+    "@twitch-stats/config-eslint-custom": "*",
+    "@twitch-stats/config-tsconfig": "*",
     "@types/node": "~17.0.18",
-    
     "eslint": "~8.10.0"
   },
   "dependencies": {
-    "typescript": "~4.5.5",
     "@twitch-stats/config": "*",
-    "@twitch-stats/twitch": "*",
     "@twitch-stats/database": "*",
-    "pino": "~7.8.0",
+    "@twitch-stats/twitch": "*",
     "kafkajs": "~1.16.0",
-    "ts-command-line-args": "~2.2.1"
+    "pino": "~7.8.0",
+    "ts-command-line-args": "~2.2.1",
+    "typescript": "^5.1.3"
   }
 }
