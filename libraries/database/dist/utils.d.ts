@@ -4,3 +4,4 @@ export interface Query {
     values: Array<any>;
 }
 export declare function buildMultiInsert<T>(stmt: string, template: string, data: Array<any>, mapping: (data: T) => Array<any>): Query;
+//# sourceMappingURL=utils.d.ts.map

@@ -33,3 +33,4 @@ export declare const defaultValues: {
     streamsTopic: string;
     streamsIdTopic: string;
 };
+//# sourceMappingURL=index.d.ts.map

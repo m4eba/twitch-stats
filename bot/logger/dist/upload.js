@@ -56,9 +56,15 @@ for (let i = 0; i < files.length; ++i) {
         dateFromFilename: nDate.toISODate(),
     }, 'file found');
     if (days && days > config.deleteAfter) {
-        const f = path.join(config.path, files[i]);
-        await uploadFile(files[i]);
-        // rename to testing before deleting
-        await fs.promises.rm(f);
+        try {
+            const f = path.join(config.path, files[i]);
+            await uploadFile(files[i]);
+            // rename to testing before deleting
+            await fs.promises.rm(f);
+        }
+        catch (e) {
+            console.log('unable to upload file', files[i]);
+            console.log(e);
+        }
     }
 }

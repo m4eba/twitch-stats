@@ -81,3 +81,4 @@ export interface StreamsByIdMessage {
 }
 export declare function init(config: TwitchConfig): Promise<void>;
 export declare function helix<T>(endpoint: string, params: any, api?: string): Promise<T>;
+//# sourceMappingURL=index.d.ts.map
