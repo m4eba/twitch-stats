@@ -1,0 +1,146 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/stats-client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("STATS_DATABASE_URL")
+}
+
+model game {
+  game_id     BigInt   @id
+  name        String
+  box_art_url String
+  updated_at  DateTime @db.Timestamptz(6)
+}
+
+model probe {
+  stream_id BigInt
+  user_id   BigInt
+  viewers   Int
+  time      DateTime @db.Timestamptz(6)
+
+  @@id([stream_id, user_id, time])
+}
+
+model stream {
+  stream_id  BigInt    @id
+  user_id    BigInt
+  title      String
+  tags       String[]
+  game_id    BigInt
+  started_at DateTime  @db.Timestamptz(6)
+  ended_at   DateTime? @db.Timestamptz(6)
+  updated_at DateTime? @db.Timestamptz(6)
+
+  @@index([ended_at])
+  @@index([started_at])
+  @@index([updated_at])
+  @@index([user_id])
+}
+
+model stream_game {
+  stream_id BigInt
+  game_id   BigInt
+  time      DateTime @db.Timestamptz(6)
+
+  @@id([stream_id, game_id, time])
+}
+
+model stream_tag_ids {
+  stream_id BigInt
+  tag_id    String   @db.Uuid
+  time      DateTime @db.Timestamptz(6)
+
+  @@id([stream_id, tag_id, time], map: "stream_tags_pkey")
+}
+
+/// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
+model stream_tags {
+  stream_id BigInt
+  tag       String[]
+  time      DateTime @db.Timestamptz(6)
+
+  //@@id([stream_id, tag, time], map: "stream_tags_pkey1")
+
+
+  @@ignore
+}
+
+model stream_title {
+  stream_id BigInt
+  title     String
+  time      DateTime @db.Timestamptz(6)
+
+  @@id([stream_id, title, time])
+}
+
+model streamers {
+  user_id          BigInt    @id
+  login            String
+  display_name     String
+  type             String
+  profile_image    String
+  view_count       BigInt    @default(0)
+  follower         BigInt    @default(0)
+  broadcaster_type String
+  created_at       DateTime? @db.Timestamptz(6)
+  vods_updated_at  DateTime? @db.Timestamptz(6)
+  vods_forever     Boolean   @default(false)
+  updated_at       DateTime? @db.Timestamptz(6)
+
+  @@index([login])
+  @@index([updated_at])
+  @@index([vods_updated_at])
+}
+
+model streamers_follower_probe {
+  user_id  BigInt
+  follower BigInt
+  time     DateTime @db.Timestamptz(6)
+
+  @@id([user_id, time])
+}
+
+model streamers_views_probe {
+  user_id    BigInt
+  view_count BigInt
+  time       DateTime @db.Timestamptz(6)
+
+  @@id([user_id, time])
+}
+
+model tags {
+  tag_id                    String   @id @db.Uuid
+  is_auto                   Boolean
+  localization_names        String
+  localization_descriptions String
+  updated_at                DateTime @db.Timestamptz(6)
+}
+
+model user_online {
+  user_id     BigInt
+  stream_id   BigInt
+  last_update DateTime @db.Timestamptz(6)
+
+  @@id([stream_id, user_id])
+  @@index([last_update])
+}
+
+model vod {
+  vod_id        BigInt    @id
+  user_id       BigInt
+  title         String
+  duration      Int
+  created_at    DateTime  @db.Timestamptz(6)
+  url           String
+  thumbnail_url String
+  view_count    Int
+  viewable      Boolean   @default(true)
+  removed       Boolean   @default(false)
+  updated_at    DateTime? @db.Timestamptz(6)
+
+  @@index([created_at])
+  @@index([user_id])
+}
