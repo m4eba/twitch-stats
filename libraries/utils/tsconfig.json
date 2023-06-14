@@ -1,5 +1,5 @@
 {
-  "extends": "@twitch-stats/config-tsconfig/microservice.json",
+  "extends": "@twitch-stats/config-tsconfig/library.json",
   "include": ["."],
   "exclude": ["dist", "build", "node_modules"],
   "compilerOptions": {

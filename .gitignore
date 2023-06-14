@@ -71,3 +71,4 @@ temp
 
 dist
 .turbo
+tsconfig.tsbuildinfo
