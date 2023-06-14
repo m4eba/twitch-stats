@@ -66,8 +66,8 @@ export const LogConfigOpt: ArgumentConfig<LogConfig> = {
   logLevel: { type: String, defaultValue: 'info' },
 };
 
-/* eslint-disable @rushstack/typedef-var */
 export const defaultValues = {
   streamsTopic: 'twitch-stats-streams',
   streamsIdTopic: 'twitch-stats-streams-id',
+  exportTopic: 'twitch-stats-exported-stream',
 };
