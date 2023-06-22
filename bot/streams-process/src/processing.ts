@@ -84,8 +84,14 @@ export default class Processing {
     return game_id;
   }
 
-  public async processStreams(time: Date, data: Stream[]): Promise<void> {
-    if (data.length === 0) return Promise.resolve();
+  public async processStreams(time: Date, data2: Stream[]): Promise<void> {
+    if (data2.length === 0) return Promise.resolve();
+
+    /* filter out this test data
+     
+    {"id":"2","user_id":"testDocumentId2","user_login":"testDocumentName2","user_name":"","game_id":"2","game_name":"","type":"live","title":"","viewer_count":1000,"started_at":"1970-01-01T00:00:02Z","language":"testBroadcasterLanguage2","thumbnail_url":"https://static-cdn.jtvnw.net/previews-ttv/live_user_testDocumentName2-{width}x{height}.jpg","tag_ids":[],"tags":null,"is_mature":false}
+    */
+    const data = data2.filter((d) => d.user_id !== 'testDocumentId2');
 
     this.log.debug({ time, data }, 'process streams');
     await this.insertProbes(data, time);

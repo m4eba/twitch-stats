@@ -13,6 +13,7 @@ jobs:
           - name: logger
           - name: missing
           - name: streams
+          - name: streams-export
           - name: streams-id
           - name: streams-process
     steps:
