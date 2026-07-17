@@ -59,17 +59,46 @@ function utcDay(offsetDays: number): string {
   return d.toISOString().substring(0, 10);
 }
 
-// create future partitions
+interface Partition {
+  name: string;
+  upper: Date | null;
+}
+
+async function partitionsOf(table: string): Promise<Partition[]> {
+  const result = await pool.query(
+    `SELECT c.relname AS name, pg_get_expr(c.relpartbound, c.oid) AS bound
+     FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid
+     WHERE i.inhparent = $1::regclass`,
+    [table]
+  );
+  return result.rows.map((r) => {
+    const match = /TO \('([^']+)'\)/.exec(r.bound);
+    return { name: r.name, upper: match ? new Date(match[1]) : null };
+  });
+}
+
+// create future partitions, starting after the existing coverage (the
+// legacy partition may still cover today)
 for (const table of TABLES) {
+  const existing = await partitionsOf(table);
+  let maxUpper: Date | null = null;
+  for (const p of existing) {
+    if (p.upper !== null && (maxUpper === null || p.upper > maxUpper)) {
+      maxUpper = p.upper;
+    }
+  }
+  let created = 0;
   for (let i = 0; i <= config.daysAhead; ++i) {
     const from = utcDay(i);
     const to = utcDay(i + 1);
+    if (maxUpper !== null && new Date(from) < maxUpper) continue;
     const name = `${table}_p${from.replace(/-/g, '')}`;
     await pool.query(
       `CREATE TABLE IF NOT EXISTS ${name} PARTITION OF ${table} FOR VALUES FROM ('${from}') TO ('${to}')`
     );
+    ++created;
   }
-  logger.info({ table, daysAhead: config.daysAhead }, 'partitions ensured');
+  logger.info({ table, created }, 'partitions ensured');
 }
 
 // oldest still-live stream limits what can be dropped
@@ -87,21 +116,13 @@ const cutoff =
     : retentionCutoff;
 
 for (const table of TABLES) {
-  const partitions = await pool.query(
-    `SELECT c.relname AS name, pg_get_expr(c.relpartbound, c.oid) AS bound
-     FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid
-     WHERE i.inhparent = $1::regclass`,
-    [table]
-  );
-  for (const part of partitions.rows) {
+  for (const part of await partitionsOf(table)) {
     if (part.name.endsWith('_legacy')) continue;
-    const match = /TO \('([^']+)'\)/.exec(part.bound);
-    if (!match) continue;
-    const upper = new Date(match[1]);
-    if (upper <= cutoff) {
+    if (part.upper === null) continue;
+    if (part.upper <= cutoff) {
       await pool.query(`DROP TABLE ${part.name}`);
       logger.info({ table, partition: part.name }, 'partition dropped');
-    } else if (upper <= retentionCutoff) {
+    } else if (part.upper <= retentionCutoff) {
       logger.warn(
         { table, partition: part.name, minLiveStarted },
         'partition kept, long-running live stream overlaps it'

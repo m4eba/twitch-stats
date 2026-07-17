@@ -1,0 +1,42 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    ports:
+      - '5447:5432'
+    environment:
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: tw_stats
+
+  kafka:
+    image: apache/kafka:3.7.0
+    ports:
+      - '19000:19000'
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:19000
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:19000
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ':9001'
+    # tmpfs so a nearly-full host disk doesn't trip minio's free-space threshold
+    volumes:
+      - type: tmpfs
+        target: /data
+        tmpfs:
+          size: 2147483648
+    ports:
+      - '9008:9000'
+      - '9009:9001'
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin

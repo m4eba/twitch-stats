@@ -65,6 +65,7 @@ const logger: Logger = pino({ level: config.logLevel }).child({
   module: 'streams-archive',
 });
 
+logger.info({ topic: config.streamEndedTopic }, 'starting');
 const pool: Pool = await initPostgres(config);
 const s3 = initS3(config);
 const archiver: Archiver = new Archiver(
@@ -82,10 +83,12 @@ const kafka: Kafka = new Kafka({
 
 const consumer: Consumer = kafka.consumer({ groupId: 'streams-archive' });
 await consumer.connect();
+logger.info('kafka connected');
 await consumer.subscribe({
   topic: config.streamEndedTopic,
   fromBeginning: true,
 });
+logger.info('subscribed');
 
 // offsets of buffered-but-not-flushed messages, committed after a
 // successful flush (kafka is the write-ahead log)
