@@ -4,7 +4,7 @@ FROM node:18 AS builder
 
 ARG SERVICE
 WORKDIR /app
-RUN npm install -g turbo
+RUN npm install -g turbo@^1
 COPY . .
 
 RUN turbo prune --scope=@twitch-stats/${SERVICE} --docker
