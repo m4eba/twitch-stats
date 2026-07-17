@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>bfhmm8sbl</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/tmp/claude-1000/-home-petschm-dev-twitch-twitch-stats-twitch-stats/d51affae-029d-4454-ad1c-d281c5686518/tasks/bfhmm8sbl.output</output-file>
+<status>completed</status>
+<summary>Background command "Watch release workflow until completion" completed (exit code 0)</summary>
+</task-notification>
