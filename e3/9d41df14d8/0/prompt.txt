@@ -1,0 +1,1 @@
+flux deployment is a different repo, you need to tag and push this first so the image is created
