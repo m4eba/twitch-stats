@@ -1,0 +1,87 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "ec9cf8e9832c",
+  "session_id": "d51affae-029d-4454-ad1c-d281c5686518",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-17T21:52:22.813513318Z",
+  "branch": "main",
+  "checkpoints_count": 7,
+  "files_touched": [
+    ".gitignore"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-4-8[1m]",
+  "turn_id": "42e4c908f286",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 38,
+    "cache_creation_tokens": 56083,
+    "cache_read_tokens": 980618,
+    "output_tokens": 18237,
+    "api_call_count": 20
+  },
+  "session_metrics": {
+    "turn_count": 7
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-17T21:52:22.747241821Z",
+    "agent_lines": 4,
+    "agent_removed": 1,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 4,
+    "total_lines_changed": 5,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 1066,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/settings.json": 84,
+        "build-logger.sh": 2,
+        "build-missing.sh": 2,
+        "build-streams-id.sh": 2,
+        "build-streams-process.sh": 2,
+        "build-streams.sh": 2,
+        "build.sh": 13,
+        "deploy/kustomization.yaml": 4,
+        "deploy/logger/b2-creds.yaml": 9,
+        "deploy/logger/cm-upload.yaml": 9,
+        "deploy/logger/kustomization.yaml": 8,
+        "deploy/logger/logger.yaml": 72,
+        "deploy/logger/upload.yaml": 87,
+        "deploy/missing/kustomization.yaml": 6,
+        "deploy/missing/missing.yaml": 78,
+        "deploy/missing/redis-service.yaml": 13,
+        "deploy/missing/redis.yaml": 27,
+        "deploy/single copy.yaml": 92,
+        "deploy/single.yaml": 94,
+        "deploy/streams-id/kustomization.yaml": 4,
+        "deploy/streams-id/streams-id.yaml": 56,
+        "deploy/streams-process.yaml": 90,
+        "deploy/streams-process/kustomization.yaml": 4,
+        "deploy/streams-process/streams-process.yaml": 75,
+        "deploy/streams/kustomization.yaml": 4,
+        "deploy/streams/streams.yaml": 51,
+        "hack/logger/kustomization.yaml": 4,
+        "hack/missing/database.yaml": 37,
+        "hack/missing/kustomization.yaml": 6,
+        "hack/streams-id/kustomization.yaml": 4,
+        "hack/streams-process/database.yaml": 35,
+        "hack/streams-process/kustomization.yaml": 6,
+        "hack/streams/kustomization.yaml": 4,
+        "skaffold-logger.yaml": 16,
+        "skaffold-missing.yaml": 16,
+        "skaffold-streams-id.yaml": 16,
+        "skaffold-streams-process.yaml": 16,
+        "skaffold-streams.yaml": 16
+      }
+    }
+  ]
+}

@@ -1,0 +1,181 @@
+i want to log twitch streams like twitchtracker or sullygnome - this is my first try, but when the database got too big the insert queries got super slow, also i don't want to hold that much history data in expensive database for now. my second try was to log to file system, but also too slow to keep up with everything
+analyze the code then come up with a way to store the stream data, it should store the stream info json and the viewers and title change overtime
+
+---
+
+<task-notification>
+<task-id>a216548420d1d0089</task-id>
+<tool-use-id>toolu_01PXV2NP4xzJn5NUkF15n1rn</tool-use-id>
+<output-file>/tmp/claude-1000/-home-petschm-dev-twitch-twitch-stats-twitch-stats/d51affae-029d-4454-ad1c-d281c5686518/tasks/a216548420d1d0089.output</output-file>
+<status>completed</status>
+<summary>Agent "Explore twitch-stats codebase" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>I now have a complete picture of the system. Here is my detailed report.
+
+---
+
+# Twitch-Stats Monorepo: Architecture &amp; Data-Flow Report
+
+## Overall architecture / how pieces communicate
+
+The system is an **event-driven pipeline glued together by Apache Kafka** (kafkajs), with **PostgreSQL** as the system-of-record and **Redis** as a dedup cache. There is no direct service-to-service calling — everything flows through Kafka topics. Deployed on Kubernetes (kustomize manifests under `deploy/`).
+
+Kafka topics (defaults defined in `libraries/config/src/index.ts:69-73`):
+- `twitch-stats-streams` — raw stream batches (`streamsTopic`)
+- `twitch-stats-streams-id` — user IDs needing a targeted re-poll (`streamsIdTopic`)
+- `twitch-stats-exported-stream` — export notifications (`exportTopic`, largely unused)
+
+Pipeline:
+```
+[streams CronJob] --helix /streams--&gt; Kafka(streams) --+--&gt; [streams-process] --&gt; Postgres
+                                                        +--&gt; [missing] --&gt; Redis + Postgres (users/games)
+                                                        +--&gt; [logger/write] --&gt; NFS .txt files --&gt; [logger/upload] --&gt; S3/B2
+[streams-process] --&gt; Kafka(streams-id) --&gt; [streams-id] --helix /streams?user_id--&gt; Kafka(streams)  (loop back)
+[streams-export] reads Postgres directly --&gt; NFS JSON files (no Kafka in practice)
+```
+
+---
+
+## 1. Bot packages
+
+### bot/streams (the poller) — `bot/streams/src/index.ts`
+The primary Twitch fetcher. Runs as a **Kubernetes CronJob every 10 minutes** (`deploy/streams/streams.yaml:7` → `schedule: '*/10 * * * *'`), runs once and exits.
+
+- Calls Helix `GET /helix/streams` paginated, `first: 100` per page (`index.ts:71,88`), following `pagination.cursor` in a `do/while` loop (line 78-149).
+- For each page it wraps `result.data` into a `StreamsMessage` and publishes to the `streams` topic via `producer.sendBatch` (line 100-117). Message key `'stream'`, timestamp = now.
+- **Stopping condition**: paginates downward by viewer count; when the last stream on a page has `viewer_count &lt; config.minViewers` (default **5**, `index.ts:33`) it sends a final message with `endConfig {updateStartTime, update:true}` and breaks (line 119-148). So each run polls *all streams down to ~5 viewers*.
+- No DB writes here — pure Twitch→Kafka producer.
+
+### bot/streams-process (the DB writer) — `bot/streams-process/src/index.ts` + `processing.ts`
+Long-running **Deployment** (`deploy/streams-process/streams-process.yaml`). Kafka consumer group `stream-process`, subscribes to `streams` topic (`index.ts:66-68`). This is where nearly all stream data lands in Postgres.
+
+Per message (`processing.ts:87` `processStreams`), it runs a sequence of **batched multi-row INSERT ... ON CONFLICT** statements (all via `buildMultiInsert`, one SQL statement per table per batch):
+- `probe` — viewer-count time series: `(stream_id,user_id,viewers,time)` ON CONFLICT DO NOTHING (`processing.ts:254-266`)
+- `user_online` — currently-live tracking: `(user_id,stream_id,last_update)` ON CONFLICT DO UPDATE last_update (`239-252`)
+- `stream` — one row per stream, ON CONFLICT DO UPDATE title/tags/game_id/updated_at, clears `ended_at` (`268-289`)
+- Before updating, `splitNewAndOld` (`339-375`) does a `SELECT * FROM stream WHERE stream_id IN (...)` to diff, then writes change-history tables:
+  - `stream_game` `(stream_id,game_id,time)` (`291-302`)
+  - `stream_title` `(stream_id,title,time)` (`304-315`)
+  - `stream_tags` `(stream_id,tag,time)` (`317-337`)
+- `game_id` sanitized to `'0'` if non-numeric (`assureGameId`, line 80-85).
+
+`processEnd` (`processing.ts:121`): on the `endConfig` message it finds `user_online` rows with `last_update &lt; updateStartTime` (streams that dropped off), sets their `stream.ended_at`/`updated_at` = last_update + 5 min, deletes from `user_online`, and emits their `user_id`s to the `streams-id` topic for a confirmation re-poll. Note: these end-updates are done as **per-row sequential `pool.query` in a for-loop** (line 136-151) — not batched.
+
+### bot/streams-id (targeted re-poll) — `bot/streams-id/src/index.ts`
+Deployment, consumer group `streams-id`, consumes `streamsIdTopic`. For each `StreamsByIdMessage.ids` it calls Helix `GET /helix/streams?user_id=...` in chunks of 100 (`index.ts:65-99`) and republishes results back to the `streams` topic — closing the loop so streams-process can confirm end-of-stream.
+
+### bot/missing (user/game enrichment) — `bot/missing/src/index.ts`, `missing.ts`, `prefix.ts`
+Deployment, consumer group `stream-missing`, consumes `streams` topic. For every batch it extracts user_ids + game_ids and checks **Redis** (`mGet` with prefixes `user_id_`, `game_id_`, `prefix.ts`) to see which are unknown (`missing.ts:69-84`). Unknown ones are fetched from Helix `GET /users?id=` (chunks of 100) and `GET /games?id=`, written to Postgres via the database library (`insertUpdateStreamers`, `insertViewsProbes`, `insertUpdateGames`), then their IDs cached in Redis via `mSet` in chunks of 1000 (`insertIds`, line 57-67). Redis is the dedup filter that keeps it from re-fetching the ~same streamers every 10 min.
+- `initRedis` (`missing.ts:99`) warms the cache from Postgres on startup (streamers/games with `created_at/updated_at &gt; last cached time`).
+- Two standalone maintenance scripts: `fullUpdateMissing.ts` (streams every `stream` row, re-fetches all missing users/games; batch=100) and `fullUpdateRedis.ts` (rebuilds the whole Redis cache from `game`/`streamers` tables, `--batchSize` default **1000**, line 23).
+
+### bot/logger (Kafka→file archival) — `bot/logger/src/`
+- `write.ts` — Deployment, consumer group `stream-log`, consumes `streams` topic, and appends each raw message to daily rolling files via `FileWriter` on an **NFS mount** (`deploy/logger/logger.yaml`: nfs server `10.30.2.1:/srv/storage` at `/log`).
+- `FileWriter.ts` — appends `{"time":...,"data":...}\n` lines to `YYYY-MM-DD.txt` (`FileWriter.ts:52`) using a single append `fs.createWriteStream({flags:'a'})`; rolls file when the day-of-month changes. This is a streaming append (reasonably efficient) — one open stream, buffered writes.
+- `read.ts` — replay tool: reads a `.txt` file line-by-line and re-publishes into Kafka (forces `endConfig.update=false`).
+- `upload.ts` — **CronJob daily at 00:15** (`deploy/logger/upload.yaml:7`). Uploads `.txt` files older than `deleteAfter` days (default 5) to S3/Backblaze (`aws-sdk`), then `rm`s them.
+
+### bot/streams-export (Postgres→JSON files) — `bot/streams-export/src/index.ts`
+**This is the file-system storage attempt and the likely slow path.** Standalone job (no deployment manifest found). Purpose: archive ended streams out of Postgres into JSON files.
+- Streams `SELECT * FROM stream WHERE ended_at is not null AND ended_at &lt; now()-age` (default age = **7 days**, `index.ts:39`) via `pg-query-stream` (line 180-195).
+- **Per-row processing pauses the stream and does synchronous serial work** (`processStreamRow`, line 110-174):
+  - `fs.promises.mkdir(recursive)` a nested directory layout: `{path}/{user_id}/{YYYY}/{MM}/` (line 113-120)
+  - Runs **4 separate per-stream SELECT queries** (`stream_game`, `stream_tags`, `probe`, `stream_title`, line 123-141) — one round-trip each, no joins/batching
+  - `fs.promises.writeFile` **one JSON file per stream**, pretty-printed with indentation, named `{started_at ISO}-{stream_id}.json` (line 149-154)
+  - Optionally 5 `DELETE` queries per stream if `--delete` (line 156-172)
+- **Why it's slow**: fully serialized (`stream.pause()`/`resume()` around each row, line 190-195), one file write + `mkdir` + 4-5 DB round-trips per stream, pretty-printed JSON, many small files scattered across a deep per-user/year/month directory tree. Lots of `console.log` per row too. No batching anywhere.
+
+---
+
+## 2. Prisma schema — `libraries/prisma/prisma/stats_schema.prisma`
+
+`provider = "postgresql"`, `url = env("STATS_DATABASE_URL")`, client generated to `../generated/stats-client`. Note the schema is **introspected** (`prisma db pull`) — Postgres is the source of truth, Prisma is only used by streams-export as a type/client dep. IDs are `BigInt`, timestamps `Timestamptz(6)`.
+
+Models / tables:
+| Model | Primary key | Indexes | Notes |
+|---|---|---|---|
+| `game` | `game_id` | — | name, box_art_url, updated_at |
+| `probe` | `(stream_id,user_id,time)` | — | viewer-count time series |
+| `stream` | `stream_id` | `ended_at`, `started_at`, `updated_at`, `user_id` | title, `tags String[]`, game_id, ended_at nullable |
+| `stream_game` | `(stream_id,game_id,time)` | — | game change history |
+| `stream_tag_ids` | `(stream_id,tag_id,time)` (map `stream_tags_pkey`) | — | `tag_id Uuid` (legacy) |
+| `stream_tags` | `@@ignore` (no valid PK) | — | `tag String[]`; commented-out composite PK (line 60-69) — Prisma can't model it |
+| `stream_title` | `(stream_id,title,time)` | — | title change history |
+| `streamers` | `user_id` | `login`, `updated_at`, `vods_updated_at` | view_count, follower, broadcaster_type, vods_* |
+| `streamers_follower_probe` | `(user_id,time)` | — | follower time series |
+| `streamers_views_probe` | `(user_id,time)` | — | view_count time series |
+| `tags` | `tag_id (Uuid)` | — | localization strings |
+| `user_online` | `(stream_id,user_id)` | `last_update` | live-stream working set |
+| `vod` | `vod_id` | `created_at`, `user_id` | VOD metadata (no bot writes it in current src) |
+
+---
+
+## 3. Database library — `libraries/database/src/`
+
+- `init.ts` — `initPostgres(config)` builds a `pg.Pool` (with optional SSL/CA/cert), registers a NUMERIC(1700) → float type parser. Returns a shared pool. Pool error handler logs only.
+- `utils.ts` — the batching primitive. `buildMultiInsert&lt;T&gt;(stmt, template, data, mapping)` (`utils.ts:20-58`) builds a **single multi-row parameterized INSERT** by expanding `$n` placeholders across all rows into one `VALUES (...),(...),...` statement — this is the batching mechanism used everywhere. `buildInList` builds `$1,$2,...` for `IN (...)` clauses.
+- `games.ts` / `users.ts` / `tags.ts` — thin wrappers producing one batched `INSERT ... ON CONFLICT DO UPDATE/NOTHING` per entity type (`insertUpdateGames`, `insertUpdateStreamers`, `insertViewsProbes`, `insertUpdateTags`).
+- All queries use raw `pool.query` with the pg driver. **No ORM at runtime, no transactions, no prepared-statement reuse.** Batching = one big multi-VALUES INSERT per table per Kafka message. The notable non-batched exceptions are `processEnd` (per-row loop) and all of streams-export.
+
+**Caveat on batch size**: `buildMultiInsert` puts every row of a message into one statement. Since `streams` publishes up to 100 streams per Kafka message but there can be many pages, and each message → one INSERT per table, parameter counts stay modest. But there is **no cap** — a very large single message would blow past Postgres's 65535-parameter limit.
+
+---
+
+## 4. File-system storage (the slow attempt)
+
+Two file-based subsystems (details above):
+- **logger** — append-only daily `.txt` line logs on NFS, then daily S3 upload. Efficient (streaming append), archival of the raw Kafka stream.
+- **streams-export** — the problematic one: **one pretty-printed JSON file per stream** in a deep `{path}/{user_id}/{year}/{month}/` tree, each requiring a `mkdir` + 4-5 serial DB queries + a `writeFile`, all fully serialized via `stream.pause()`/`resume()`. This is per-file, per-row, synchronous-in-sequence I/O with no batching or concurrency — the clear performance bottleneck. Both write to the same NFS mount (`10.30.2.1:/srv/storage`), so small-file writes also pay NFS latency.
+
+---
+
+## 5. Communication / dependency summary
+
+- **Kafka (kafkajs ~1.16)** in: streams, streams-id, streams-process, missing, logger. Consumer groups: `stream-process`, `streams-id`, `stream-missing`, `stream-log`.
+- **Postgres (pg ~8.7)** in: streams-process, missing, streams-export, database lib.
+- **Redis (redis ~4.0)** only in: missing (dedup cache).
+- **Twitch Helix** (`libraries/twitch`, `node-fetch` + `@twurple/auth` ClientCredentials) in: streams, streams-id, missing.
+- **AWS SDK (~2.1289)** only in: logger (upload).
+- **Prisma (@prisma/client ^4.15)** only in: streams-export (via `@twitch-stats/prisma`).
+- **pg-query-stream** in: streams-export, missing (fullUpdate scripts).
+- Shared libs: `@twitch-stats/config` (CLI arg parsing via `ts-command-line-args`, everywhere), `@twitch-stats/twitch`, `@twitch-stats/database`, `@twitch-stats/utils` (pino logger).
+
+`helix()` (`libraries/twitch/src/index.ts:111`) retries up to 10 times with a 5s AbortController timeout and 2s sleep between tries, then `process.exit(1)`.
+
+---
+
+## 6. Data-volume hints
+
+- **Poll cadence**: streams CronJob every **10 minutes** (`deploy/streams/streams.yaml:7`); each run walks all Twitch streams paginated 100/page down to **viewer_count ≥ 5** (`minViewers` default 5). That's essentially "every live channel with ≥5 viewers, every 10 minutes" — on Twitch that is on the order of tens of thousands of streams per run (hundreds of pages of 100).
+- Each 10-min run therefore writes to `probe` once per live stream → the `probe` table is the dominant growth (tens of thousands of rows every 10 min).
+- Helix page size: **100** (`streams` `first:100`; `users`/`games`/`streams?user_id` all chunk at 100).
+- Redis dedup writes: chunks of **1000** (`missing.ts:62`); `fullUpdateRedis` `--batchSize` default **1000**.
+- streams-export threshold: streams ended **&gt; 7 days** ago (`age` default `60*60*24*7`); logger upload deletes local files after **5** days.
+
+Key files for reference: `bot/streams/src/index.ts`, `bot/streams-process/src/processing.ts`, `bot/streams-export/src/index.ts:110-199` (slow path), `bot/logger/src/FileWriter.ts`, `bot/missing/src/missing.ts`, `libraries/database/src/utils.ts` (batching), `libraries/prisma/prisma/stats_schema.prisma`, `libraries/twitch/src/index.ts` (helix), `deploy/streams/streams.yaml` (10-min schedule).</result>
+<usage><subagent_tokens>59965</subagent_tokens><tool_uses>32</tool_uses><duration_ms>159162</duration_ms></usage>
+</task-notification>
+
+---
+
+why json per day and not per stream?
+
+---
+
+i would not even write to the filesystem anymore, just write to S3
+
+---
+
+where do you keep the buffer?
+
+---
+
+ok, show me your plan again
+
+---
+
+instead of B2 i want to user hetzner object storage
+
+---
+
+first clean up the git repo, what are the uncommited changes about?
