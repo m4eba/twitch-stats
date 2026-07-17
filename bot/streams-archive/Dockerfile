@@ -1,4 +1,4 @@
-ARG SERVICE=streams-export
+ARG SERVICE=streams-archive
 
 FROM node:18 AS builder
 

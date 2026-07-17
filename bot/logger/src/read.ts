@@ -8,6 +8,8 @@ import {
 } from '@twitch-stats/config';
 import pino, { Logger } from 'pino';
 import fs from 'node:fs';
+import zlib from 'node:zlib';
+import type { Readable } from 'node:stream';
 import { Kafka, Producer } from 'kafkajs';
 import { ArgumentConfig, parse } from 'ts-command-line-args';
 import * as readline from 'node:readline';
@@ -50,9 +52,10 @@ logger.info({ topic: config.topic }, 'topic');
 const producer: Producer = kafka.producer();
 await producer.connect();
 
-const instream: fs.ReadStream = fs.createReadStream(config.filename, {
-  encoding: 'utf-8',
-});
+let instream: Readable = fs.createReadStream(config.filename);
+if (config.filename.endsWith('.gz')) {
+  instream = instream.pipe(zlib.createGunzip());
+}
 
 const rl: readline.Interface = readline.createInterface({
   input: instream,

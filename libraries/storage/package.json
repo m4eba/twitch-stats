@@ -1,15 +1,11 @@
 {
-  "name": "@twitch-stats/logger",
+  "name": "@twitch-stats/storage",
   "version": "0.0.11",
-  "bin": {
-    "write": "dist/write.js",
-    "read": "dist/read.js"
-  },
+  "main": "dist/index.js",
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "build": "tsc",
-    "start": "node dist/write.js"
+    "build": "tsc"
   },
   "devDependencies": {
     "@twitch-stats/config-eslint-custom": "*",
@@ -18,12 +14,8 @@
     "eslint": "~8.10.0"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "~3.370.0",
     "@twitch-stats/config": "*",
-    "@twitch-stats/storage": "*",
-    "@twitch-stats/twitch": "*",
-    "kafkajs": "~1.16.0",
-    "pino": "~7.8.0",
-    "ts-command-line-args": "~2.2.1",
     "typescript": "^5.1.3"
   }
 }

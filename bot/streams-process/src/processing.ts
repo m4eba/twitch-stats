@@ -1,6 +1,8 @@
 import type {
   Stream,
   StreamsByIdMessage,
+  StreamEndedMessage,
+  EndedStream,
   ProcessingEndConfig,
 } from '@twitch-stats/twitch';
 import type { Pool } from 'pg';
@@ -54,17 +56,20 @@ export default class Processing {
   private pool: Pool;
   private producer: Producer;
   private streamIdTopic: string;
+  private streamEndedTopic: string;
 
   public constructor(
     log: Logger,
     pool: Pool,
     producer: Producer,
-    streamIdTopic: string
+    streamIdTopic: string,
+    streamEndedTopic: string
   ) {
     this.log = log;
     this.pool = pool;
     this.producer = producer;
     this.streamIdTopic = streamIdTopic;
+    this.streamEndedTopic = streamEndedTopic;
   }
 
   /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -130,26 +135,35 @@ export default class Processing {
       'streams not update since batch start count'
     );
 
-    const value: StreamsByIdMessage = {
-      ids: [],
-    };
-    for (let i = 0; i < result.rows.length; ++i) {
-      const stream: UserOnlineRow = result.rows[i];
-      value.ids.push(stream.user_id);
-
+    const rows: UserOnlineRow[] = result.rows;
+    const ended: EndedStream[] = rows.map((r) => ({
+      stream_id: r.stream_id,
+      user_id: r.user_id,
       // add 5 minutes to last update
-      const plus5 = moment(stream.last_update).add(5, 'minutes').format();
-      this.log.debug({ id: stream.stream_id, time: plus5 }, 'end stream');
-      await this.pool.query(
-        'UPDATE stream SET ended_at = $1, updated_at = $2 WHERE stream_id = $3',
-        [plus5, plus5, stream.stream_id]
+      ended_at: moment(r.last_update).add(5, 'minutes').format(),
+    }));
+
+    if (ended.length > 0) {
+      const update = buildMultiInsert<EndedStream>(
+        'UPDATE stream AS s SET ended_at = v.ended_at, updated_at = v.ended_at FROM (VALUES ',
+        '$1::bigint,$2::timestamptz',
+        ended,
+        (d: EndedStream) => [d.stream_id, d.ended_at]
       );
-      await this.pool.query(
-        'DELETE FROM user_online WHERE user_id = $1 and stream_id = $2',
-        [stream.user_id, stream.stream_id]
-      );
+      update.text +=
+        ') AS v(stream_id, ended_at) WHERE s.stream_id = v.stream_id';
+      await this.query(update);
+
+      await this.query({
+        text: 'DELETE FROM user_online WHERE last_update < $1',
+        values: [endConfig.updateStartTime],
+      });
     }
+
     if (endConfig.update) {
+      const value: StreamsByIdMessage = {
+        ids: ended.map((e) => e.user_id),
+      };
       await this.producer.send({
         topic: this.streamIdTopic,
         messages: [
@@ -159,81 +173,23 @@ export default class Processing {
           },
         ],
       });
-    }
-    /*
-    let ids: string[] = [];
-    let idMap = new Map<string, UserOnlineRow>();
-    for (let i = 0; i < result.rows.length; ++i) {
-      ids.push(result.rows[i].user_id);
-      idMap.set(result.rows[i].user_id, result.rows[i]);
-    }
 
-    // new streams to process
-    let processStreams: Stream[] = [];
-    // streams to end
-    let endStreams: UserOnlineRow[] = [];
-
-    const now = new Date();
-    // check if stream still going
-    while (update && ids.length > 0) {
-      let params = ids.splice(0, 100);
-      const urlParams = new URLSearchParams();
-      urlParams.append('limit', '100');
-      for (let i = 0; i < params.length; ++i) {
-        urlParams.append('user_id', params[i]);
-      }
-
-      const streams = await helix<PaginatedResult<Stream>>(
-        `streams?${urlParams.toString()}`,
-        null
-      );
-      if (streams.data) {
-        for (let i = 0; i < streams.data.length; ++i) {
-          const newStream = streams.data[i];
-          const oldStream = idMap.get(newStream.user_id);
-          if (oldStream == null) continue; // that should not happen
-          // test if user started a new stream
-          if (newStream.id !== oldStream.stream_id) {
-            this.log.info({ id: newStream.id }, 'new stream started');
-            // prcess the new stream
-            processStreams.push(newStream);
-            // end the old stream
-            endStreams.push(oldStream);
-          }
-          idMap.delete(oldStream.user_id);
-        }
+      // notify the archiver, chunked so large batches stay within message limits
+      for (let i = 0; i < ended.length; i += 1000) {
+        const msg: StreamEndedMessage = {
+          streams: ended.slice(i, i + 1000),
+        };
+        await this.producer.send({
+          topic: this.streamEndedTopic,
+          messages: [
+            {
+              key: 'stream',
+              value: JSON.stringify(msg),
+            },
+          ],
+        });
       }
     }
-
-    // all ids that are still in the map need to be removed
-    idMap.forEach((oldStream: UserOnlineRow) => {
-      endStreams.push(oldStream);
-    });
-
-    this.log.info({ count: processStreams.length }, 'new streams count');
-    this.log.info({ count: endStreams.length }, 'end streams count');
-
-    // processing new streams
-    for (let i = 0; i < processStreams.length; ++i) {
-      await this.processStream(now, processStreams[i]);
-    }
-
-    // end old streams
-    for (let i = 0; i < endStreams.length; ++i) {
-      // add 5 minutes to last update
-      const s = endStreams[i];
-      const plus5 = moment(s.last_update).add(5, 'minutes').format();
-      this.log.debug({ id: s.stream_id, time: plus5 }, 'end stream');
-      await this.pool.query(
-        'UPDATE stream SET ended_at = $1, updated_at = $2 WHERE stream_id = $3',
-        [plus5, plus5, s.stream_id]
-      );
-      await this.pool.query(
-        'DELETE FROM user_online WHERE user_id = $1 and stream_id = $2',
-        [s.user_id, s.stream_id]
-      );
-    }
-    */
   }
 
   private async insertLiveStreams(data: Stream[], time: Date): Promise<void> {

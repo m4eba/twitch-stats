@@ -1,36 +1,48 @@
 import {
   KafkaConfig,
   KafkaConfigOpt,
+  PostgresConfig,
+  PostgresConfigOpt,
   S3Config,
   S3ConfigOpt,
-  defaultValues,
   FileConfig,
   FileConfigOpt,
   LogConfig,
   LogConfigOpt,
+  defaultValues,
 } from '@twitch-stats/config';
-import { ChunkBuffer, initS3, chunkKey, putChunk } from '@twitch-stats/storage';
+import type { StreamEndedMessage } from '@twitch-stats/twitch';
+import { initPostgres } from '@twitch-stats/database';
+import { initS3 } from '@twitch-stats/storage';
+import type { Pool } from 'pg';
 import pino, { Logger } from 'pino';
 import { Kafka, Consumer } from 'kafkajs';
 import { ArgumentConfig, parse } from 'ts-command-line-args';
+import { Archiver } from './archiver.js';
 
-interface WriterConfig {
-  topic: string;
-  keyPrefix: string;
+interface ArchiveConfig {
+  streamEndedTopic: string;
+  graceSeconds: number;
   flushIntervalSeconds: number;
   flushBytes: number;
+  keyPrefix: string;
 }
 
-const WriterConfigOpt: ArgumentConfig<WriterConfig> = {
-  topic: { type: String, defaultValue: defaultValues.streamsTopic },
-  keyPrefix: { type: String, defaultValue: 'raw/' },
-  flushIntervalSeconds: { type: Number, defaultValue: 5 * 60 },
-  flushBytes: { type: Number, defaultValue: 32 * 1024 * 1024 },
+const ArchiveConfigOpt: ArgumentConfig<ArchiveConfig> = {
+  streamEndedTopic: {
+    type: String,
+    defaultValue: defaultValues.streamEndedTopic,
+  },
+  graceSeconds: { type: Number, defaultValue: 60 * 60 },
+  flushIntervalSeconds: { type: Number, defaultValue: 15 * 60 },
+  flushBytes: { type: Number, defaultValue: 64 * 1024 * 1024 },
+  keyPrefix: { type: String, defaultValue: 'archive/' },
 };
 
 interface Config
-  extends WriterConfig,
+  extends ArchiveConfig,
     KafkaConfig,
+    PostgresConfig,
     S3Config,
     FileConfig,
     LogConfig {}
@@ -38,7 +50,8 @@ interface Config
 const config: Config = parse<Config>(
   {
     ...KafkaConfigOpt,
-    ...WriterConfigOpt,
+    ...ArchiveConfigOpt,
+    ...PostgresConfigOpt,
     ...S3ConfigOpt,
     ...FileConfigOpt,
     ...LogConfigOpt,
@@ -49,20 +62,30 @@ const config: Config = parse<Config>(
 );
 
 const logger: Logger = pino({ level: config.logLevel }).child({
-  module: 'log-writer',
+  module: 'streams-archive',
 });
 
+const pool: Pool = await initPostgres(config);
 const s3 = initS3(config);
-const buffer: ChunkBuffer = new ChunkBuffer();
+const archiver: Archiver = new Archiver(
+  logger,
+  pool,
+  s3,
+  config.s3Bucket,
+  config.keyPrefix
+);
 
 const kafka: Kafka = new Kafka({
   clientId: config.kafkaClientId,
   brokers: config.kafkaBroker,
 });
-logger.info({ topic: config.topic }, 'subscribe');
-const consumer: Consumer = kafka.consumer({ groupId: 'stream-log' });
+
+const consumer: Consumer = kafka.consumer({ groupId: 'streams-archive' });
 await consumer.connect();
-await consumer.subscribe({ topic: config.topic, fromBeginning: true });
+await consumer.subscribe({
+  topic: config.streamEndedTopic,
+  fromBeginning: true,
+});
 
 // offsets of buffered-but-not-flushed messages, committed after a
 // successful flush (kafka is the write-ahead log)
@@ -77,30 +100,27 @@ function withLock(fn: () => Promise<void>): Promise<void> {
 }
 
 async function flushAndCommit(): Promise<void> {
-  if (buffer.count === 0) return;
-  const key = chunkKey(config.keyPrefix, new Date());
-  const bytes = buffer.byteLength;
-  const count = buffer.count;
-  await putChunk(s3, config.s3Bucket, key, buffer.concat());
-  buffer.reset();
+  const count = await archiver.flush();
   if (pendingOffsets.size > 0) {
     await consumer.commitOffsets(
       [...pendingOffsets.entries()].map(([partition, offset]) => ({
-        topic: config.topic,
+        topic: config.streamEndedTopic,
         partition,
         offset: (BigInt(offset) + 1n).toString(),
       }))
     );
     pendingOffsets.clear();
   }
-  logger.info({ key, messages: count, bytes }, 'chunk uploaded');
+  if (count > 0) {
+    logger.info({ streams: count }, 'flushed');
+  }
 }
 
 function maybeFlush(): Promise<void> {
-  if (buffer.count === 0) return Promise.resolve();
+  if (archiver.bufferedCount === 0) return Promise.resolve();
   if (
-    buffer.byteLength >= config.flushBytes ||
-    buffer.ageMs >= config.flushIntervalSeconds * 1000
+    archiver.bufferedBytes >= config.flushBytes ||
+    archiver.bufferAgeMs >= config.flushIntervalSeconds * 1000
   ) {
     return flushAndCommit();
   }
@@ -112,16 +132,36 @@ const flushTimer = setInterval(() => {
     logger.error({ error: e }, 'flush failed');
     process.exit(1);
   });
-}, 15 * 1000);
+}, 30 * 1000);
 
 await consumer.run({
   autoCommit: false,
-  eachMessage: async ({ partition, message }) => {
+  eachMessage: async ({ topic, partition, message }) => {
     try {
       if (!message.value) return;
+
+      // wait out the grace period so a stream that briefly drops off and
+      // comes back is not archived mid-stream
+      const readyAt =
+        parseInt(message.timestamp) + config.graceSeconds * 1000;
+      const wait = readyAt - Date.now();
+      if (wait > 0) {
+        consumer.pause([{ topic, partitions: [partition] }]);
+        consumer.seek({ topic, partition, offset: message.offset });
+        setTimeout(() => {
+          consumer.resume([{ topic, partitions: [partition] }]);
+        }, Math.min(wait, 5 * 60 * 1000));
+        return;
+      }
+
+      const msg = JSON.parse(message.value.toString()) as StreamEndedMessage;
       await withLock(async () => {
-        await buffer.add(
-          `{"time":"${message.timestamp}","data":${message.value?.toString()}}`
+        const count = await archiver.collect(
+          msg.streams.map((s) => s.stream_id)
+        );
+        logger.debug(
+          { received: msg.streams.length, collected: count },
+          'message processed'
         );
         pendingOffsets.set(partition, message.offset);
         await maybeFlush();
@@ -141,6 +181,7 @@ async function shutdown(): Promise<void> {
     logger.error({ error: e }, 'flush on shutdown failed');
   }
   await consumer.disconnect();
+  await pool.end();
   process.exit(0);
 }
 

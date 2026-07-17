@@ -93,6 +93,16 @@ export interface StreamsByIdMessage {
   ids: string[];
 }
 
+export interface EndedStream {
+  stream_id: string;
+  user_id: string;
+  ended_at: string;
+}
+
+export interface StreamEndedMessage {
+  streams: EndedStream[];
+}
+
 let access_token: AccessToken | null = null;
 let auth: ClientCredentialsAuthProvider | null = null;
 

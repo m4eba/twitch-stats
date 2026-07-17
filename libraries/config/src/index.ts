@@ -66,8 +66,24 @@ export const LogConfigOpt: ArgumentConfig<LogConfig> = {
   logLevel: { type: String, defaultValue: 'info' },
 };
 
+export interface S3Config {
+  s3Endpoint: string;
+  s3Region: string;
+  s3Bucket: string;
+  s3ForcePathStyle: boolean;
+}
+
+// credentials come from the environment (AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY)
+export const S3ConfigOpt: ArgumentConfig<S3Config> = {
+  s3Endpoint: { type: String },
+  s3Region: { type: String, defaultValue: 'auto' },
+  s3Bucket: { type: String },
+  s3ForcePathStyle: { type: Boolean, defaultValue: true },
+};
+
 export const defaultValues = {
   streamsTopic: 'twitch-stats-streams',
   streamsIdTopic: 'twitch-stats-streams-id',
+  streamEndedTopic: 'twitch-stats-stream-ended',
   exportTopic: 'twitch-stats-exported-stream',
 };

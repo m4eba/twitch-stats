@@ -22,11 +22,16 @@ import Processing from './processing.js';
 interface TopicConfig {
   topic: string;
   streamIdTopic: string;
+  streamEndedTopic: string;
 }
 
 const TopicConfigOpt: ArgumentConfig<TopicConfig> = {
   topic: { type: String, defaultValue: defaultValues.streamsTopic },
   streamIdTopic: { type: String, defaultValue: defaultValues.streamsIdTopic },
+  streamEndedTopic: {
+    type: String,
+    defaultValue: defaultValues.streamEndedTopic,
+  },
 };
 
 interface Config
@@ -72,7 +77,8 @@ const processing: Processing = new Processing(
   logger,
   pool,
   producer,
-  config.streamIdTopic
+  config.streamIdTopic,
+  config.streamEndedTopic
 );
 
 await consumer.run({
