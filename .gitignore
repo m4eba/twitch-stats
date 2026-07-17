@@ -72,3 +72,6 @@ temp
 dist
 .turbo
 tsconfig.tsbuildinfo
+# Claude Code / entire tool state
+.claude/
+.entire/
