@@ -10,6 +10,7 @@ import {
   LogConfigOpt,
 } from '@twitch-stats/config';
 import { ChunkBuffer, initS3, chunkKey, putChunk } from '@twitch-stats/storage';
+import { metrics, startMetricsServer } from '@twitch-stats/utils';
 import pino, { Logger } from 'pino';
 import { Kafka, Consumer } from 'kafkajs';
 import { ArgumentConfig, parse } from 'ts-command-line-args';
@@ -19,6 +20,7 @@ interface WriterConfig {
   keyPrefix: string;
   flushIntervalSeconds: number;
   flushBytes: number;
+  metricsPort: number;
 }
 
 const WriterConfigOpt: ArgumentConfig<WriterConfig> = {
@@ -26,6 +28,7 @@ const WriterConfigOpt: ArgumentConfig<WriterConfig> = {
   keyPrefix: { type: String, defaultValue: 'raw/' },
   flushIntervalSeconds: { type: Number, defaultValue: 5 * 60 },
   flushBytes: { type: Number, defaultValue: 32 * 1024 * 1024 },
+  metricsPort: { type: Number, defaultValue: 9090 },
 };
 
 interface Config
@@ -54,6 +57,23 @@ const logger: Logger = pino({ level: config.logLevel }).child({
 
 const s3 = initS3(config);
 const buffer: ChunkBuffer = new ChunkBuffer();
+
+startMetricsServer(config.metricsPort);
+const chunkBytes = new metrics.Counter({
+  name: 'twstats_chunk_uploaded_bytes_total',
+  help: 'gzipped bytes uploaded to object storage',
+  labelNames: ['type'],
+});
+const chunkMessages = new metrics.Counter({
+  name: 'twstats_chunk_messages_total',
+  help: 'messages contained in uploaded chunks',
+  labelNames: ['type'],
+});
+const chunkUploads = new metrics.Counter({
+  name: 'twstats_chunk_uploads_total',
+  help: 'chunk objects uploaded to object storage',
+  labelNames: ['type'],
+});
 
 const kafka: Kafka = new Kafka({
   clientId: config.kafkaClientId,
@@ -93,6 +113,9 @@ async function flushAndCommit(): Promise<void> {
     );
     pendingOffsets.clear();
   }
+  chunkBytes.labels('raw').inc(bytes);
+  chunkMessages.labels('raw').inc(count);
+  chunkUploads.labels('raw').inc();
   logger.info({ key, messages: count, bytes }, 'chunk uploaded');
 }
 

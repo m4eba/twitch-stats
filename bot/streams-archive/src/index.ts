@@ -14,6 +14,7 @@ import {
 import type { StreamEndedMessage } from '@twitch-stats/twitch';
 import { initPostgres } from '@twitch-stats/database';
 import { initS3 } from '@twitch-stats/storage';
+import { metrics, startMetricsServer } from '@twitch-stats/utils';
 import type { Pool } from 'pg';
 import pino, { Logger } from 'pino';
 import { Kafka, Consumer } from 'kafkajs';
@@ -26,6 +27,7 @@ interface ArchiveConfig {
   flushIntervalSeconds: number;
   flushBytes: number;
   keyPrefix: string;
+  metricsPort: number;
 }
 
 const ArchiveConfigOpt: ArgumentConfig<ArchiveConfig> = {
@@ -37,6 +39,7 @@ const ArchiveConfigOpt: ArgumentConfig<ArchiveConfig> = {
   flushIntervalSeconds: { type: Number, defaultValue: 15 * 60 },
   flushBytes: { type: Number, defaultValue: 64 * 1024 * 1024 },
   keyPrefix: { type: String, defaultValue: 'archive/' },
+  metricsPort: { type: Number, defaultValue: 9090 },
 };
 
 interface Config
@@ -76,6 +79,36 @@ const archiver: Archiver = new Archiver(
   config.keyPrefix
 );
 
+startMetricsServer(config.metricsPort);
+const chunkBytes = new metrics.Counter({
+  name: 'twstats_chunk_uploaded_bytes_total',
+  help: 'gzipped bytes uploaded to object storage',
+  labelNames: ['type'],
+});
+const chunkUploads = new metrics.Counter({
+  name: 'twstats_chunk_uploads_total',
+  help: 'chunk objects uploaded to object storage',
+  labelNames: ['type'],
+});
+const streamsArchived = new metrics.Counter({
+  name: 'twstats_streams_archived_total',
+  help: 'streams archived to object storage',
+});
+new metrics.Gauge({
+  name: 'twstats_archive_buffer_bytes',
+  help: 'compressed bytes waiting in the archive buffer',
+  collect() {
+    this.set(archiver.bufferedBytes);
+  },
+});
+new metrics.Gauge({
+  name: 'twstats_archive_buffer_age_seconds',
+  help: 'age of the oldest document in the archive buffer',
+  collect() {
+    this.set(archiver.bufferAgeMs / 1000);
+  },
+});
+
 const kafka: Kafka = new Kafka({
   clientId: config.kafkaClientId,
   brokers: config.kafkaBroker,
@@ -103,7 +136,13 @@ function withLock(fn: () => Promise<void>): Promise<void> {
 }
 
 async function flushAndCommit(): Promise<void> {
+  const bytes = archiver.bufferedBytes;
   const count = await archiver.flush();
+  if (count > 0) {
+    chunkBytes.labels('archive').inc(bytes);
+    chunkUploads.labels('archive').inc();
+    streamsArchived.inc(count);
+  }
   if (pendingOffsets.size > 0) {
     await consumer.commitOffsets(
       [...pendingOffsets.entries()].map(([partition, offset]) => ({
