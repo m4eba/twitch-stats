@@ -21,6 +21,7 @@
     "@twitch-stats/config": "*",
     "@twitch-stats/storage": "*",
     "@twitch-stats/twitch": "*",
+    "@twitch-stats/utils": "*",
     "kafkajs": "~1.16.0",
     "pino": "~7.8.0",
     "ts-command-line-args": "~2.2.1",
