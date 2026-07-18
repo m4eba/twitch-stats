@@ -1,0 +1,86 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "a0d7cf0bf9c9",
+  "session_id": "d51affae-029d-4454-ad1c-d281c5686518",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-18T04:32:43.287373979Z",
+  "branch": "main",
+  "checkpoints_count": 8,
+  "files_touched": [
+    "libraries/utils/package.json",
+    "libraries/utils/src/index.ts",
+    "bot/logger/src/write.ts",
+    "bot/streams-archive/src/index.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-4-8[1m]",
+  "turn_id": "9ad73f48d585",
+  "checkpoint_transcript_start": 948,
+  "transcript_lines_at_start": 948,
+  "compact_transcript_start": 232,
+  "token_usage": {
+    "input_tokens": 104,
+    "cache_creation_tokens": 64828,
+    "cache_read_tokens": 16354441,
+    "output_tokens": 43971,
+    "api_call_count": 54
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "claude-skill-toolu_01UkV4FrdC5v3ELXkVCyMELC",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "ports"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "9ad73f48d585",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 564,
+        "end": 565,
+        "entry_ids": [
+          "8b6136ad-b0b5-41c4-b0e0-ea1218c3683a"
+        ],
+        "tool_use_id": "toolu_01UkV4FrdC5v3ELXkVCyMELC"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_01UkV4FrdC5v3ELXkVCyMELC"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: ports",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 21
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-18T04:32:43.06683354Z",
+    "agent_lines": 91,
+    "agent_removed": 1,
+    "human_added": 77,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 168,
+    "total_lines_changed": 196,
+    "agent_percentage": 46.93877551020408,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}

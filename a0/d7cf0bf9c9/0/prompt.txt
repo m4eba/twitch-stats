@@ -1,0 +1,37 @@
+oh, so there is still old data
+
+---
+
+what you think how big need the pvc for the db be?
+
+---
+
+discard it, just make a new one - also just do 1 instance - wire up backup - i don't think the old one had that wired up
+
+---
+
+i filled in the s3 secrets
+
+---
+
+deploy it
+
+---
+
+<task-notification>
+<task-id>bkxvzy0v4</task-id>
+<summary>Monitor event: "twstats: first raw + archive chunks in Hetzner bucket, pod crashloops"</summary>
+<event>first raw chunk uploaded: 2026-07-18 06:23:36    4665045 raw/2026/07/18/042336-ad4da09b-f20a-4332-818b-882b01cf423c.jsonl.gz</event>
+</task-notification>
+
+---
+
+what are good signals for prometheus and grafana
+
+---
+
+the raw chunk is the old file logger but just to s3?
+
+---
+
+then also add raw and archive chunk size for the day to prometheus
