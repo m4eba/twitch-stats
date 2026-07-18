@@ -1,0 +1,11 @@
+<task-notification>
+<task-id>bk5jk4pvf</task-id>
+<tool-use-id>toolu_01L8iEZAghDCL8veZPLFAL5m</tool-use-id>
+<output-file>/tmp/claude-1000/-home-petschm-dev-twitch-twitch-stats-twitch-stats/d51affae-029d-4454-ad1c-d281c5686518/tasks/bk5jk4pvf.output</output-file>
+<status>completed</status>
+<summary>Background command "Watch rerun of release workflow" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+there is nothing running atm

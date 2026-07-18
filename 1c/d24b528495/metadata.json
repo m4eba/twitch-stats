@@ -1,0 +1,28 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "1cd24b528495",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "db/README.md",
+    "db/migrations/20260717000000_base_schema.sql",
+    "hack/README.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/1c/d24b528495/0/metadata.json",
+      "transcript": "/1c/d24b528495/0/full.jsonl",
+      "compact_transcript": "/1c/d24b528495/0/transcript.jsonl",
+      "content_hash": "/1c/d24b528495/0/content_hash.txt",
+      "prompt": "/1c/d24b528495/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 23,
+    "cache_creation_tokens": 272938,
+    "cache_read_tokens": 2890233,
+    "output_tokens": 9437,
+    "api_call_count": 12
+  }
+}

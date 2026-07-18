@@ -1,0 +1,85 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "1cd24b528495",
+  "session_id": "d51affae-029d-4454-ad1c-d281c5686518",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-18T03:37:53.293184246Z",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "db/migrations/20260717000000_base_schema.sql",
+    "hack/README.md",
+    "db/README.md"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-4-8[1m]",
+  "turn_id": "9af0cdd95f5a",
+  "checkpoint_transcript_start": 876,
+  "transcript_lines_at_start": 876,
+  "compact_transcript_start": 215,
+  "token_usage": {
+    "input_tokens": 23,
+    "cache_creation_tokens": 272938,
+    "cache_read_tokens": 2890233,
+    "output_tokens": 9437,
+    "api_call_count": 12
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "claude-skill-toolu_01UkV4FrdC5v3ELXkVCyMELC",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "ports"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "9af0cdd95f5a",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 564,
+        "end": 565,
+        "entry_ids": [
+          "8b6136ad-b0b5-41c4-b0e0-ea1218c3683a"
+        ],
+        "tool_use_id": "toolu_01UkV4FrdC5v3ELXkVCyMELC"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_01UkV4FrdC5v3ELXkVCyMELC"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: ports",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 13
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-18T03:37:53.137735593Z",
+    "agent_lines": 115,
+    "agent_removed": 2,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 115,
+    "total_lines_changed": 173,
+    "agent_percentage": 67.63005780346822,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}
