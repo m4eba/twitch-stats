@@ -9,6 +9,11 @@ export DATABASE_URL="postgres://user:pass@host:5432/tw_stats?sslmode=disable"
 dbmate --migrations-dir db/migrations up
 ```
 
+## 20260717000000 — base schema
+
+The introspected production schema with `IF NOT EXISTS`: no-op on the old
+database, full bootstrap on a fresh one.
+
 ## 20260717000001 — partition history tables
 
 Converts `probe`, `stream_title`, `stream_game`, `stream_tags` to

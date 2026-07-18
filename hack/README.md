@@ -7,8 +7,7 @@ MinIO 9008/9009 — registered in ~/dev/sessions/PORT_REGISTRY.md).
 cd hack
 docker compose up -d
 
-# schema: production base tables, then the dbmate migrations
-psql postgres://postgres:password@localhost:5447/tw_stats -f base_schema.sql
+# schema: the dbmate migrations bootstrap a fresh database completely
 DATABASE_URL='postgres://postgres:password@localhost:5447/tw_stats?sslmode=disable' \
   dbmate --migrations-dir ../db/migrations --no-dump-schema up
 
