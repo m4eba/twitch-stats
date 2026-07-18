@@ -1,0 +1,84 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "b1d5792694bb",
+  "session_id": "d51affae-029d-4454-ad1c-d281c5686518",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-18T04:37:05.261398627Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "grafana/README.md",
+    "grafana/pipeline-dashboard.json"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-4-8[1m]",
+  "turn_id": "0e4fa2c64401",
+  "checkpoint_transcript_start": 1351,
+  "transcript_lines_at_start": 1351,
+  "compact_transcript_start": 331,
+  "token_usage": {
+    "input_tokens": 2,
+    "cache_creation_tokens": 700,
+    "cache_read_tokens": 365372,
+    "output_tokens": 782,
+    "api_call_count": 1
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "claude-skill-toolu_01UkV4FrdC5v3ELXkVCyMELC",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "ports"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "0e4fa2c64401",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 564,
+        "end": 565,
+        "entry_ids": [
+          "8b6136ad-b0b5-41c4-b0e0-ea1218c3683a"
+        ],
+        "tool_use_id": "toolu_01UkV4FrdC5v3ELXkVCyMELC"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_01UkV4FrdC5v3ELXkVCyMELC"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: ports",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 22
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-18T04:37:05.06441574Z",
+    "agent_lines": 1255,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 1255,
+    "total_lines_changed": 1255,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}

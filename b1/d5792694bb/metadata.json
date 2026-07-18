@@ -1,0 +1,27 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "b1d5792694bb",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "grafana/README.md",
+    "grafana/pipeline-dashboard.json"
+  ],
+  "sessions": [
+    {
+      "metadata": "/b1/d5792694bb/0/metadata.json",
+      "transcript": "/b1/d5792694bb/0/full.jsonl",
+      "compact_transcript": "/b1/d5792694bb/0/transcript.jsonl",
+      "content_hash": "/b1/d5792694bb/0/content_hash.txt",
+      "prompt": "/b1/d5792694bb/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 2,
+    "cache_creation_tokens": 700,
+    "cache_read_tokens": 365372,
+    "output_tokens": 782,
+    "api_call_count": 1
+  }
+}
