@@ -32,14 +32,6 @@ export class ChunkBuffer {
     return this.firstAddedAt === null ? 0 : Date.now() - this.firstAddedAt;
   }
 
-  // When the first document of the current buffer was added. Chunk keys should
-  // be derived from this rather than from flush time: a buffer that starts at
-  // 23:58 and flushes at 00:01 otherwise lands under the following day, and
-  // anything reading a day's prefix silently misses it.
-  public get startedAt(): Date | null {
-    return this.firstAddedAt === null ? null : new Date(this.firstAddedAt);
-  }
-
   public async add(doc: string): Promise<ChunkEntry> {
     const data = await gzipAsync(Buffer.from(doc + '\n', 'utf8'));
     const entry: ChunkEntry = { offset: this.size, length: data.length };
