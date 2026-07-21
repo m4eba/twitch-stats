@@ -10,6 +10,7 @@ import {
 } from '@twitch-stats/config';
 import { init } from '@twitch-stats/twitch';
 import pg from 'pg';
+import { initPostgres, postgresConfig } from '@twitch-stats/database';
 import QueryStream from 'pg-query-stream';
 import { createClient } from 'redis';
 import pino, { Logger } from 'pino';
@@ -131,20 +132,8 @@ const logger: Logger = pino({ level: config.logLevel }).child({
   module: 'fullUpdateMissing',
 });
 
-const pool: pg.Pool = new pg.Pool({
-  host: config.pgHost,
-  port: config.pgPort,
-  database: config.pgDatabase,
-  user: config.pgUser,
-  password: config.pgPassword,
-});
-const client: pg.Client = new pg.Client({
-  host: config.pgHost,
-  port: config.pgPort,
-  database: config.pgDatabase,
-  user: config.pgUser,
-  password: config.pgPassword,
-});
+const pool: pg.Pool = await initPostgres(config);
+const client: pg.Client = new pg.Client(await postgresConfig(config));
 await client.connect();
 
 const redis: ReturnType<typeof createClient> = createClient({

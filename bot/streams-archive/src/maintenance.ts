@@ -93,17 +93,25 @@ for (const table of TABLES) {
     const to = utcDay(i + 1);
     if (maxUpper !== null && new Date(from) < maxUpper) continue;
     const name = `${table}_p${from.replace(/-/g, '')}`;
+    // Bounds must carry an explicit UTC offset. A bare date literal is cast
+    // using the server's TimeZone, so on a DB behind UTC each partition is
+    // shifted and the coverage check above then skips a day, leaving a gap that
+    // makes every probe insert in that window fail and is never repaired.
     await pool.query(
-      `CREATE TABLE IF NOT EXISTS ${name} PARTITION OF ${table} FOR VALUES FROM ('${from}') TO ('${to}')`
+      `CREATE TABLE IF NOT EXISTS ${name} PARTITION OF ${table} FOR VALUES FROM ('${from} 00:00:00+00') TO ('${to} 00:00:00+00')`
     );
     ++created;
   }
   logger.info({ table, created }, 'partitions ensured');
 }
 
-// oldest still-live stream limits what can be dropped
+// The oldest stream still in the hot store limits what can be dropped. Every
+// row left in `stream` is by definition unarchived - the archiver deletes on
+// success - so ended-but-not-yet-archived streams must count too. Restricting
+// this to ended_at IS NULL let a lagging or crashed archiver have its probe
+// history dropped out from under it, archiving those streams with probe_count 0.
 const live = await pool.query(
-  'SELECT min(started_at) AS min_started FROM stream WHERE ended_at IS NULL'
+  'SELECT min(started_at) AS min_started FROM stream'
 );
 const minLiveStarted: Date | null = live.rows[0].min_started;
 

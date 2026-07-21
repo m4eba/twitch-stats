@@ -67,7 +67,10 @@ async function query(
     const params = ids.splice(0, 100);
     logger.debug({ ids: params }, 'user ids');
     const urlParams = new URLSearchParams();
-    urlParams.append('limit', '100');
+    // Helix pages with `first`, not `limit`. An unknown parameter is ignored,
+    // which silently falls back to the default page size of 20 and drops the
+    // remaining 80 users of every batch.
+    urlParams.append('first', '100');
     for (let i = 0; i < params.length; ++i) {
       urlParams.append('user_id', params[i]);
     }
@@ -76,10 +79,11 @@ async function query(
       `streams?${urlParams.toString()}`,
       null
     );
-    if (streams.data) {
-      logger.debug({ count: streams.data.length }, 'result count');
+    if (!Array.isArray(streams.data)) {
+      throw new Error('helix returned no data array for streams');
     }
-    if (streams.data && streams.data.length > 0) {
+    logger.debug({ count: streams.data.length }, 'result count');
+    if (streams.data.length > 0) {
       const value: StreamsMessage = {
         streams: streams.data,
       };
@@ -117,13 +121,35 @@ await consumer.subscribe({ topic: config.fromTopic, fromBeginning: true });
 
 await consumer.run({
   eachMessage: async ({ message }) => {
-    if (!message.key || !message.value) {
-      logger.error({ message }, 'no message key or value');
-      return;
-    }
-    if (message.key.toString() === 'stream') {
-      const data = JSON.parse(message.value.toString()) as StreamsByIdMessage;
-      await query(logger, config.toTopic, data.ids, producer);
+    try {
+      if (!message.key || !message.value) {
+        logger.error({ message }, 'no message key or value');
+        return;
+      }
+      if (message.key.toString() === 'stream') {
+        const data = JSON.parse(message.value.toString()) as StreamsByIdMessage;
+        if (!Array.isArray(data.ids)) {
+          logger.error({ message }, 'message has no ids array');
+          return;
+        }
+        await query(logger, config.toTopic, data.ids, producer);
+      }
+    } catch (e) {
+      logger.error({ error: e }, 'error in eachMessage');
+      process.exit(1);
     }
   },
+});
+
+async function shutdown(): Promise<void> {
+  await consumer.disconnect();
+  await producer.disconnect();
+  process.exit(0);
+}
+
+process.on('SIGTERM', () => {
+  shutdown().catch(() => process.exit(1));
+});
+process.on('SIGINT', () => {
+  shutdown().catch(() => process.exit(1));
 });
