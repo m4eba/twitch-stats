@@ -1,0 +1,8 @@
+{
+  "extends": "@twitch-stats/config-tsconfig/microservice.json",
+  "include": ["."],
+  "exclude": ["dist", "build", "node_modules"],
+  "compilerOptions": {
+    "outDir": "./dist"
+  }
+}

@@ -11,7 +11,7 @@ import {
   LogConfig,
   LogConfigOpt,
 } from '@twitch-stats/config';
-import { init, StreamsMessage } from '@twitch-stats/twitch';
+import { init, platformOf, StreamsMessage } from '@twitch-stats/twitch';
 import { initPostgres } from '@twitch-stats/database';
 import type { Pool } from 'pg';
 import pino, { Logger } from 'pino';
@@ -96,9 +96,12 @@ await consumer.run({
       const d = new Date(parseInt(message.timestamp));
       const msg = JSON.parse(message.value.toString()) as StreamsMessage;
 
-      await processing.processStreams(d, msg.streams);
+      // absent platform means twitch: raw messages archived before the field
+      // existed must keep replaying correctly
+      const platform = platformOf(msg);
+      await processing.processStreams(platform, d, msg.streams);
       if (msg.endConfig) {
-        await processing.processEnd(msg.endConfig);
+        await processing.processEnd(platform, msg.endConfig);
       }
 
       logger.flush();

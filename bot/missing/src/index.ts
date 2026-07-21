@@ -11,7 +11,7 @@ import {
   LogConfigOpt,
   defaultValues,
 } from '@twitch-stats/config';
-import { init, StreamsMessage } from '@twitch-stats/twitch';
+import { init, platformOf, StreamsMessage } from '@twitch-stats/twitch';
 import type { Pool } from 'pg';
 import { initPostgres } from '@twitch-stats/database';
 import { createClient } from 'redis';
@@ -90,6 +90,9 @@ await consumer.run({
           message.value.toString()
         ) as StreamsMessage;
         logger.debug({ message: msg }, 'msg received');
+        // hydration goes through Helix, so kick batches are acked and dropped
+        // until a kick equivalent exists
+        if (platformOf(msg) !== 'twitch') return;
         await missing.update(msg.streams);
       }
     } catch (e) {
