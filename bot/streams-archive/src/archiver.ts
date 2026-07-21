@@ -209,9 +209,7 @@ export class Archiver {
   public async flush(): Promise<number> {
     if (this.buffer.count === 0) return 0;
     const count = this.buffer.count;
-    // key off the first buffered document rather than flush time, so a chunk
-    // spanning UTC midnight stays under the day its data belongs to
-    const key = chunkKey(this.keyPrefix, this.buffer.startedAt ?? new Date());
+    const key = chunkKey(this.keyPrefix, new Date());
 
     await putChunk(this.s3, this.bucket, key, this.buffer.concat());
     this.log.info(
