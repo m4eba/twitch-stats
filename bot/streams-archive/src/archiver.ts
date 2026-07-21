@@ -3,6 +3,7 @@ import type { Logger } from 'pino';
 import type { S3Client } from '@aws-sdk/client-s3';
 import { ChunkBuffer, chunkKey, putChunk } from '@twitch-stats/storage';
 import { buildMultiInsert } from '@twitch-stats/database';
+import type { Platform } from '@twitch-stats/twitch';
 
 interface StreamRow {
   stream_id: string;
@@ -16,6 +17,7 @@ interface StreamRow {
 }
 
 interface IndexRow {
+  platform: Platform;
   stream_id: string;
   user_id: string;
   started_at: Date;
@@ -25,6 +27,7 @@ interface IndexRow {
 }
 
 interface SummaryRow {
+  platform: Platform;
   stream_id: string;
   user_id: string;
   started_at: Date;
@@ -80,39 +83,45 @@ export class Archiver {
   // fetch history for the given streams and add one document per stream
   // to the buffer; streams that resumed (ended_at cleared) or are already
   // gone are skipped
-  public async collect(streamIds: string[]): Promise<number> {
+  public async collect(
+    platform: Platform,
+    streamIds: string[]
+  ): Promise<number> {
     let collected = 0;
     for (let i = 0; i < streamIds.length; i += SELECT_BATCH) {
       const chunk = streamIds.slice(i, i + SELECT_BATCH);
-      collected += await this.collectChunk(chunk);
+      collected += await this.collectChunk(platform, chunk);
     }
     return collected;
   }
 
-  private async collectChunk(streamIds: string[]): Promise<number> {
+  private async collectChunk(
+    platform: Platform,
+    streamIds: string[]
+  ): Promise<number> {
     const streams = await this.pool.query<StreamRow>(
-      'SELECT * FROM stream WHERE stream_id = ANY($1::bigint[]) AND ended_at IS NOT NULL',
-      [streamIds]
+      'SELECT * FROM stream WHERE platform = $2 AND stream_id = ANY($1::text[]) AND ended_at IS NOT NULL',
+      [streamIds, platform]
     );
     if (streams.rows.length === 0) return 0;
     const ids = streams.rows.map((s) => s.stream_id);
 
     const [probes, titles, games, tags] = await Promise.all([
       this.pool.query(
-        'SELECT stream_id, viewers, time FROM probe WHERE stream_id = ANY($1::bigint[]) ORDER BY time',
-        [ids]
+        'SELECT stream_id, viewers, time FROM probe WHERE platform = $2 AND stream_id = ANY($1::text[]) ORDER BY time',
+        [ids, platform]
       ),
       this.pool.query(
-        'SELECT stream_id, title, time FROM stream_title WHERE stream_id = ANY($1::bigint[]) ORDER BY time',
-        [ids]
+        'SELECT stream_id, title, time FROM stream_title WHERE platform = $2 AND stream_id = ANY($1::text[]) ORDER BY time',
+        [ids, platform]
       ),
       this.pool.query(
-        'SELECT stream_id, game_id, time FROM stream_game WHERE stream_id = ANY($1::bigint[]) ORDER BY time',
-        [ids]
+        'SELECT stream_id, game_id, time FROM stream_game WHERE platform = $2 AND stream_id = ANY($1::text[]) ORDER BY time',
+        [ids, platform]
       ),
       this.pool.query(
-        'SELECT stream_id, tag, time FROM stream_tags WHERE stream_id = ANY($1::bigint[]) ORDER BY time',
-        [ids]
+        'SELECT stream_id, tag, time FROM stream_tags WHERE platform = $2 AND stream_id = ANY($1::text[]) ORDER BY time',
+        [ids, platform]
       ),
     ]);
 
@@ -143,6 +152,10 @@ export class Archiver {
       const sTags = tagMap.get(stream.stream_id) ?? [];
 
       const doc = {
+        // the archive must be self-describing: stream ids are only unique
+        // within a platform, so a document without this is unattributable if
+        // the archive_stream index is ever lost
+        platform,
         stream_id: stream.stream_id,
         user_id: stream.user_id,
         title: stream.title,
@@ -167,6 +180,7 @@ export class Archiver {
 
       const entry = await this.buffer.add(JSON.stringify(doc));
       this.index.push({
+        platform,
         stream_id: stream.stream_id,
         user_id: stream.user_id,
         started_at: stream.started_at,
@@ -184,6 +198,7 @@ export class Archiver {
       const gameIds = [...new Set(sGames.map((g) => String(g.game_id)))];
       if (gameIds.length === 0) gameIds.push(String(stream.game_id));
       this.summaries.push({
+        platform,
         stream_id: stream.stream_id,
         user_id: stream.user_id,
         started_at: stream.started_at,
@@ -217,16 +232,22 @@ export class Archiver {
       'chunk uploaded'
     );
 
-    const archivedIds = this.index.map((r) => r.stream_id);
+    const archivedIds = new Map<Platform, string[]>();
+    for (const r of this.index) {
+      const list = archivedIds.get(r.platform);
+      if (list) list.push(r.stream_id);
+      else archivedIds.set(r.platform, [r.stream_id]);
+    }
     const client: PoolClient = await this.pool.connect();
     try {
       await client.query('BEGIN');
       for (let i = 0; i < this.index.length; i += INSERT_BATCH) {
         const insert = buildMultiInsert<IndexRow>(
-          'INSERT INTO archive_stream (stream_id,user_id,started_at,ended_at,object_key,byte_offset,byte_length) VALUES ',
-          '$1,$2,$3,$4,$5,$6,$7',
+          'INSERT INTO archive_stream (platform,stream_id,user_id,started_at,ended_at,object_key,byte_offset,byte_length) VALUES ',
+          '$1,$2,$3,$4,$5,$6,$7,$8',
           this.index.slice(i, i + INSERT_BATCH),
           (r: IndexRow) => [
+            r.platform,
             r.stream_id,
             r.user_id,
             r.started_at,
@@ -236,15 +257,16 @@ export class Archiver {
             r.length,
           ]
         );
-        insert.text += ' ON CONFLICT (stream_id) DO NOTHING';
+        insert.text += ' ON CONFLICT (platform,stream_id) DO NOTHING';
         await client.query(insert);
       }
       for (let i = 0; i < this.summaries.length; i += INSERT_BATCH) {
         const insert = buildMultiInsert<SummaryRow>(
-          'INSERT INTO stream_summary (stream_id,user_id,started_at,ended_at,duration_seconds,avg_viewers,peak_viewers,probe_count,game_ids,title_count) VALUES ',
-          '$1,$2,$3,$4,$5,$6,$7,$8,$9,$10',
+          'INSERT INTO stream_summary (platform,stream_id,user_id,started_at,ended_at,duration_seconds,avg_viewers,peak_viewers,probe_count,game_ids,title_count) VALUES ',
+          '$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11',
           this.summaries.slice(i, i + INSERT_BATCH),
           (r: SummaryRow) => [
+            r.platform,
             r.stream_id,
             r.user_id,
             r.started_at,
@@ -257,17 +279,21 @@ export class Archiver {
             r.title_count,
           ]
         );
-        insert.text += ' ON CONFLICT (stream_id) DO NOTHING';
+        insert.text += ' ON CONFLICT (platform,stream_id) DO NOTHING';
         await client.query(insert);
       }
-      await client.query(
-        'DELETE FROM stream WHERE stream_id = ANY($1::bigint[])',
-        [archivedIds]
-      );
-      await client.query(
-        'DELETE FROM user_online WHERE stream_id = ANY($1::bigint[])',
-        [archivedIds]
-      );
+      // A single buffer can hold streams from more than one platform, so the
+      // deletes are grouped rather than keyed on stream_id alone.
+      for (const [platform, ids] of archivedIds) {
+        await client.query(
+          'DELETE FROM stream WHERE platform = $2 AND stream_id = ANY($1::text[])',
+          [ids, platform]
+        );
+        await client.query(
+          'DELETE FROM user_online WHERE platform = $2 AND stream_id = ANY($1::text[])',
+          [ids, platform]
+        );
+      }
       await client.query('COMMIT');
     } catch (e) {
       await client.query('ROLLBACK');

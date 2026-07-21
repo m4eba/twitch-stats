@@ -26,6 +26,16 @@ export const TwitchConfigOpt: ArgumentConfig<TwitchConfig> = {
   twitchClientSecret: { type: String },
 };
 
+export interface KickConfig {
+  kickClientId: string;
+  kickClientSecret: string;
+}
+
+export const KickConfigOpt: ArgumentConfig<KickConfig> = {
+  kickClientId: { type: String },
+  kickClientSecret: { type: String },
+};
+
 export interface PostgresConfig {
   pgHost: string;
   pgPort: number;

@@ -79,17 +79,36 @@ export interface Video {
   duration: string;
 }
 
+// NOTE: the types below are transport contracts for the kafka pipeline and are
+// not Twitch-specific - bot/kick-streams produces the same shapes. They live
+// here for historical reasons; moving them to a neutral package is a follow-up
+// kept out of this change so it does not collide with the in-flight fixes to
+// helix() in this same file.
+
+export type Platform = 'twitch' | 'kick';
+
+// `platform` is optional on the wire and absent means 'twitch': raw messages
+// archived by bot/logger before this field existed must still replay correctly
+// through bot/logger read.ts. Use platformOf() rather than reading it directly.
+export const DEFAULT_PLATFORM: Platform = 'twitch';
+
+export function platformOf(msg: { platform?: Platform }): Platform {
+  return msg.platform ?? DEFAULT_PLATFORM;
+}
+
 export interface ProcessingEndConfig {
   updateStartTime: string;
   update: boolean;
 }
 
 export interface StreamsMessage {
+  platform?: Platform;
   streams: Stream[];
   endConfig?: ProcessingEndConfig;
 }
 
 export interface StreamsByIdMessage {
+  platform?: Platform;
   ids: string[];
 }
 
@@ -100,6 +119,7 @@ export interface EndedStream {
 }
 
 export interface StreamEndedMessage {
+  platform?: Platform;
   streams: EndedStream[];
 }
 

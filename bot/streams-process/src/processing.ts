@@ -1,4 +1,5 @@
 import type {
+  Platform,
   Stream,
   StreamsByIdMessage,
   StreamEndedMessage,
@@ -89,7 +90,11 @@ export default class Processing {
     return game_id;
   }
 
-  public async processStreams(time: Date, data2: Stream[]): Promise<void> {
+  public async processStreams(
+    platform: Platform,
+    time: Date,
+    data2: Stream[]
+  ): Promise<void> {
     if (data2.length === 0) return Promise.resolve();
 
     /* filter out this test data
@@ -98,37 +103,43 @@ export default class Processing {
     */
     const data = data2.filter((d) => d.user_id !== 'testDocumentId2');
 
-    this.log.debug({ time, data }, 'process streams');
-    await this.insertProbes(data, time);
+    this.log.debug({ platform, time, data }, 'process streams');
+    await this.insertProbes(platform, data, time);
 
     // insert into live
-    await this.insertLiveStreams(data, time);
+    await this.insertLiveStreams(platform, data, time);
 
     // we need to select all streams before updating them
     // to know what is new and old for the game_id and title tags
-    const split: Split = await this.splitNewAndOld(data);
+    const split: Split = await this.splitNewAndOld(platform, data);
     // insert new streams, update old ones
-    await this.insertUpdateStreams(data, time);
+    await this.insertUpdateStreams(platform, data, time);
 
     // insert new game and title tags
-    await this.insertStreamsGames(split.new.data, time);
-    await this.insertStreamsTitles(split.new.data, time);
-    await this.insertStreamsTags(split.new.data, time);
+    await this.insertStreamsGames(platform, split.new.data, time);
+    await this.insertStreamsTitles(platform, split.new.data, time);
+    await this.insertStreamsTags(platform, split.new.data, time);
 
     // look through the select we made before the insert
     // and find streams with changed title or game
     const change = this.changedStreams(split);
-    await this.insertStreamsGames(change.game, time);
-    await this.insertStreamsTitles(change.title, time);
-    await this.insertStreamsTags(change.tags, time);
+    await this.insertStreamsGames(platform, change.game, time);
+    await this.insertStreamsTitles(platform, change.title, time);
+    await this.insertStreamsTags(platform, change.tags, time);
   }
 
-  public async processEnd(endConfig: ProcessingEndConfig): Promise<void> {
-    this.log.debug({ endConfig }, 'endStream');
-    // get all live streams that are not updated since the start of the batch
+  public async processEnd(
+    platform: Platform,
+    endConfig: ProcessingEndConfig
+  ): Promise<void> {
+    this.log.debug({ platform, endConfig }, 'endStream');
+    // Get all live streams of THIS platform not updated since the start of the
+    // batch. The platform predicate is load-bearing: a sweep only covers its
+    // own platform, so without it the kick poller's sentinel would mark every
+    // live twitch stream as ended, and vice versa.
     const result = await this.pool.query(
-      'SELECT * FROM user_online WHERE last_update < $1',
-      [endConfig.updateStartTime]
+      'SELECT * FROM user_online WHERE platform = $1 AND last_update < $2',
+      [platform, endConfig.updateStartTime]
     );
     this.log.debug(
       { count: result.rows.length },
@@ -146,22 +157,23 @@ export default class Processing {
     if (ended.length > 0) {
       const update = buildMultiInsert<EndedStream>(
         'UPDATE stream AS s SET ended_at = v.ended_at, updated_at = v.ended_at FROM (VALUES ',
-        '$1::bigint,$2::timestamptz',
+        '$1::text,$2::text,$3::timestamptz',
         ended,
-        (d: EndedStream) => [d.stream_id, d.ended_at]
+        (d: EndedStream) => [platform, d.stream_id, d.ended_at]
       );
       update.text +=
-        ') AS v(stream_id, ended_at) WHERE s.stream_id = v.stream_id';
+        ') AS v(platform, stream_id, ended_at) WHERE s.platform = v.platform AND s.stream_id = v.stream_id';
       await this.query(update);
 
       await this.query({
-        text: 'DELETE FROM user_online WHERE last_update < $1',
-        values: [endConfig.updateStartTime],
+        text: 'DELETE FROM user_online WHERE platform = $1 AND last_update < $2',
+        values: [platform, endConfig.updateStartTime],
       });
     }
 
     if (endConfig.update) {
       const value: StreamsByIdMessage = {
+        platform,
         ids: ended.map((e) => e.user_id),
       };
       await this.producer.send({
@@ -177,6 +189,7 @@ export default class Processing {
       // notify the archiver, chunked so large batches stay within message limits
       for (let i = 0; i < ended.length; i += 1000) {
         const msg: StreamEndedMessage = {
+          platform,
           streams: ended.slice(i, i + 1000),
         };
         await this.producer.send({
@@ -192,43 +205,56 @@ export default class Processing {
     }
   }
 
-  private async insertLiveStreams(data: Stream[], time: Date): Promise<void> {
+  private async insertLiveStreams(
+    platform: Platform,
+    data: Stream[],
+    time: Date
+  ): Promise<void> {
     if (data.length === 0) return Promise.resolve();
     // insert live
     const insert = buildMultiInsert<Stream>(
-      'INSERT INTO user_online (user_id,stream_id,last_update) VALUES ',
-      '$1,$2,$3',
+      'INSERT INTO user_online (platform,user_id,stream_id,last_update) VALUES ',
+      '$1,$2,$3,$4',
       data,
-      (d: Stream) => [d.user_id, d.id, time]
+      (d: Stream) => [platform, d.user_id, d.id, time]
     );
     insert.text +=
-      ' ON CONFLICT (user_id,stream_id) DO UPDATE SET last_update=EXCLUDED.last_update';
+      ' ON CONFLICT (platform,user_id,stream_id) DO UPDATE SET last_update=EXCLUDED.last_update';
 
     return this.query(insert);
   }
 
-  private async insertProbes(data: Stream[], time: Date): Promise<void> {
+  private async insertProbes(
+    platform: Platform,
+    data: Stream[],
+    time: Date
+  ): Promise<void> {
     if (data.length === 0) return Promise.resolve();
     // insert into probe
     const insert = buildMultiInsert<Stream>(
-      'INSERT INTO probe (stream_id,user_id,viewers,time) VALUES ',
-      '$1,$2,$3,$4',
+      'INSERT INTO probe (platform,stream_id,user_id,viewers,time) VALUES ',
+      '$1,$2,$3,$4,$5',
       data,
-      (d: Stream) => [d.id, d.user_id, d.viewer_count, time]
+      (d: Stream) => [platform, d.id, d.user_id, d.viewer_count, time]
     );
-    insert.text += ' ON CONFLICT (stream_id, user_id,time) DO NOTHING';
+    insert.text += ' ON CONFLICT (platform,stream_id,user_id,time) DO NOTHING';
 
     return this.query(insert);
   }
 
-  private async insertUpdateStreams(data: Stream[], time: Date): Promise<void> {
+  private async insertUpdateStreams(
+    platform: Platform,
+    data: Stream[],
+    time: Date
+  ): Promise<void> {
     if (data.length === 0) return Promise.resolve();
     // insert into stream
     const insert = buildMultiInsert<Stream>(
-      'INSERT INTO stream (stream_id,user_id,title,tags,game_id,started_at,updated_at) VALUES ',
-      '$1,$2,$3,$4,$5,$6,$7',
+      'INSERT INTO stream (platform,stream_id,user_id,title,tags,game_id,started_at,updated_at) VALUES ',
+      '$1,$2,$3,$4,$5,$6,$7,$8',
       data,
       (d: Stream) => [
+        platform,
         d.id,
         d.user_id,
         d.title,
@@ -239,38 +265,50 @@ export default class Processing {
       ]
     );
     insert.text +=
-      ' ON CONFLICT (stream_id) DO UPDATE SET title = EXCLUDED.title, tags = EXCLUDED.tags, game_id = EXCLUDED.game_id, ended_at = null, updated_at = EXCLUDED.updated_at';
+      ' ON CONFLICT (platform,stream_id) DO UPDATE SET title = EXCLUDED.title, tags = EXCLUDED.tags, game_id = EXCLUDED.game_id, ended_at = null, updated_at = EXCLUDED.updated_at';
 
     return this.query(insert);
   }
 
-  private async insertStreamsGames(data: Stream[], time: Date): Promise<void> {
+  private async insertStreamsGames(
+    platform: Platform,
+    data: Stream[],
+    time: Date
+  ): Promise<void> {
     if (data.length === 0) return Promise.resolve();
     const insert = buildMultiInsert<Stream>(
-      'INSERT INTO stream_game (stream_id,game_id,time) VALUES ',
-      '$1,$2,$3',
+      'INSERT INTO stream_game (platform,stream_id,game_id,time) VALUES ',
+      '$1,$2,$3,$4',
       data,
-      (d) => [d.id, this.assureGameId(d.game_id), time]
+      (d) => [platform, d.id, this.assureGameId(d.game_id), time]
     );
-    insert.text += ' ON CONFLICT (stream_id, game_id,time) DO NOTHING';
+    insert.text += ' ON CONFLICT (platform,stream_id,game_id,time) DO NOTHING';
 
     return this.query(insert);
   }
 
-  private async insertStreamsTitles(data: Stream[], time: Date): Promise<void> {
+  private async insertStreamsTitles(
+    platform: Platform,
+    data: Stream[],
+    time: Date
+  ): Promise<void> {
     if (data.length === 0) return Promise.resolve();
     const insert = buildMultiInsert<Stream>(
-      'INSERT INTO stream_title (stream_id,title,time) VALUES ',
-      '$1,$2,$3',
+      'INSERT INTO stream_title (platform,stream_id,title,time) VALUES ',
+      '$1,$2,$3,$4',
       data,
-      (d: Stream) => [d.id, d.title, time]
+      (d: Stream) => [platform, d.id, d.title, time]
     );
-    insert.text += ' ON CONFLICT (stream_id, title,time) DO NOTHING';
+    insert.text += ' ON CONFLICT (platform,stream_id,title,time) DO NOTHING';
 
     return this.query(insert);
   }
 
-  private async insertStreamsTags(data: Stream[], time: Date): Promise<void> {
+  private async insertStreamsTags(
+    platform: Platform,
+    data: Stream[],
+    time: Date
+  ): Promise<void> {
     if (data.length === 0) return Promise.resolve();
     const tags: StreamIdTag[] = [];
     data.forEach((d: Stream) => {
@@ -282,24 +320,30 @@ export default class Processing {
     });
     if (tags.length === 0) return Promise.resolve();
     const insert = buildMultiInsert<StreamIdTag>(
-      'INSERT INTO stream_tags (stream_id,tag,time) VALUES ',
-      '$1,$2,$3',
+      'INSERT INTO stream_tags (platform,stream_id,tag,time) VALUES ',
+      '$1,$2,$3,$4',
       tags,
-      (d: StreamIdTag) => [d.stream_id, d.tag, time]
+      (d: StreamIdTag) => [platform, d.stream_id, d.tag, time]
     );
-    insert.text += ' ON CONFLICT (stream_id, tag, time) DO NOTHING';
+    insert.text += ' ON CONFLICT (platform,stream_id,tag,time) DO NOTHING';
 
     return this.query(insert);
   }
 
-  private async splitNewAndOld(data: Array<Stream>): Promise<Split> {
+  private async splitNewAndOld(
+    platform: Platform,
+    data: Array<Stream>
+  ): Promise<Split> {
     // map of stream ids
     const ids = data.map((d) => d.id);
-    const params = buildInList(ids);
+    // $1 is the platform, so the id placeholders start at $2
+    const params = buildInList(ids, 2);
     const query = await this.pool.query<DBStream>({
       text:
-        'SELECT * FROM stream WHERE stream_id IN (' + params.join(',') + ')',
-      values: ids,
+        'SELECT * FROM stream WHERE platform = $1 AND stream_id IN (' +
+        params.join(',') +
+        ')',
+      values: [platform, ...ids],
     });
     const oldHash: { [id: string]: DBStream } = {};
     for (let i = 0; i < query.rows.length; ++i) {
