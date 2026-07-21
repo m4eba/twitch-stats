@@ -69,7 +69,7 @@ export default class Missing {
   public async checkIds(prefix: string, ids: string[]): Promise<string[]> {
     if (ids.length === 0) return [];
     const a = this.addPrefix(prefix, ids);
-    this.log.info({ prefix, ids, arguments: a }, 'checkIdx');
+    this.log.trace({ prefix, ids, arguments: a }, 'checkIdx');
     const existing_ids = await this.redis.mGet(a);
     let new_ids = new Array<string>(ids.length);
     let idx = 0;
@@ -100,15 +100,23 @@ export default class Missing {
     const user_update = await this.getTimeFromRedis(Prefix.user);
 
     this.log.info({ update: user_update }, 'initRedis update user from');
+    // streamers.created_at is nullable and nothing ever writes it, so
+    // `created_at > $1` was NULL for every row and the user warm-start always
+    // returned nothing. insertUpdateStreamers maintains updated_at.
     const users = await this.pool.query({
-      text: 'select user_id, created_at from streamers where created_at > $1 order by created_at desc',
+      text: 'select user_id, updated_at from streamers where updated_at > $1 order by updated_at desc',
       values: [user_update],
       rowMode: 'array',
     });
 
     await this.insertIds(this.valuesFromQueryResult(Prefix.user, users));
     if (users.rows.length > 0) {
-      await this.redis.set(Prefix.user + 'time', users.rows[0][1]);
+      // node-pg returns timestamptz as a Date, which the redis client rejects
+      // with `TypeError: Invalid argument type`
+      await this.redis.set(
+        Prefix.user + 'time',
+        new Date(users.rows[0][1]).toISOString()
+      );
     }
 
     // don't have created column, use updated
@@ -123,7 +131,10 @@ export default class Missing {
 
     await this.insertIds(this.valuesFromQueryResult(Prefix.game, games));
     if (games.rows.length > 0) {
-      await this.redis.set(Prefix.game + 'time', games.rows[0][1]);
+      await this.redis.set(
+        Prefix.game + 'time',
+        new Date(games.rows[0][1]).toISOString()
+      );
     }
 
     this.log.info({}, 'initialized');
@@ -131,18 +142,27 @@ export default class Missing {
 
   public async update(streams: Stream[]): Promise<void> {
     if (streams.length === 0) return;
-    const user_ids: string[] = new Array(streams.length);
+    const user_ids: string[] = [];
     const game_ids: string[] = [];
     const game_hash = new Set<string>();
 
     for (let i = 0; i < streams.length; ++i) {
-      user_ids[i] = streams[i].user_id;
+      // Twitch injects a synthetic record into the live stream feed;
+      // streams-process filters it too. Sending it to Helix is a 400, which
+      // wedges this consumer retrying a deterministic failure forever.
+      if (streams[i].user_id === 'testDocumentId2') continue;
+      user_ids.push(streams[i].user_id);
+
+      // uncategorized streams report game_id '' - Helix rejects an empty id,
+      // and streams-process stores those as game 0 rather than a real category
       const gid = streams[i].game_id;
+      if (!gid || !/^\d+$/.test(gid)) continue;
       if (!game_hash.has(gid)) {
         game_ids.push(gid);
         game_hash.add(gid);
       }
     }
+    if (user_ids.length === 0 && game_ids.length === 0) return;
 
     const checked_user_ids = await this.checkIds(Prefix.user, user_ids);
     const checked_game_ids = await this.checkIds(Prefix.game, game_ids);
@@ -160,14 +180,14 @@ export default class Missing {
   }
 
   public async updateUser(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
     const time = new Date();
     const new_ids = [...ids];
-    const values = this.valuesFromArray(Prefix.user, new_ids);
+    const found: string[] = [];
 
     while (new_ids.length > 0) {
       const params = new_ids.splice(0, 100);
       const urlParams = new URLSearchParams();
-      urlParams.append('limit', '100');
       for (let i = 0; i < params.length; ++i) {
         urlParams.append('id', params[i]);
       }
@@ -175,18 +195,29 @@ export default class Missing {
         `users?${urlParams.toString()}`,
         null
       );
-      console.log('insert update streamers', time);
+      if (!Array.isArray(users.data)) {
+        throw new Error('helix returned no data array for users');
+      }
+      this.log.debug({ count: users.data.length }, 'insert update streamers');
       await insertUpdateStreamers(this.pool, users.data, time);
       await insertViewsProbes(this.pool, users.data, time);
+      for (const u of users.data) found.push(u.id);
     }
-    await this.insertIds(values);
+
+    // Only cache ids that were actually stored. Marking a requested-but-absent
+    // id as known (deleted or banned users are simply omitted by Helix) would
+    // suppress every future retry, and these keys have no TTL.
+    if (found.length > 0) {
+      await this.insertIds(this.valuesFromArray(Prefix.user, found));
+    }
     await this.redis.set(Prefix.user + 'time', time.toISOString());
   }
 
   public async updateGame(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
     const time = new Date();
     const new_ids = [...ids];
-    const values = this.valuesFromArray(Prefix.game, new_ids);
+    const found: string[] = [];
 
     while (new_ids.length > 0) {
       const params = new_ids.splice(0, 100);
@@ -198,10 +229,17 @@ export default class Missing {
         `games?${urlParams.toString()}`,
         null
       );
-      console.log('insert update games', time);
+      if (!Array.isArray(games.data)) {
+        throw new Error('helix returned no data array for games');
+      }
+      this.log.debug({ count: games.data.length }, 'insert update games');
       await insertUpdateGames(this.pool, games.data, time);
+      for (const g of games.data) found.push(g.id);
     }
-    await this.insertIds(values);
+
+    if (found.length > 0) {
+      await this.insertIds(this.valuesFromArray(Prefix.game, found));
+    }
     await this.redis.set(Prefix.game + 'time', time.toISOString());
   }
 }

@@ -33,4 +33,4 @@ USER node
 COPY --from=installer --chown=node:node /app .
 
 ENV MAIN_FILE=bot/${SERVICE}/dist/index.js
-CMD node ${MAIN_FILE}
+CMD exec node ${MAIN_FILE}

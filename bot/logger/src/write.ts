@@ -96,13 +96,24 @@ function withLock(fn: () => Promise<void>): Promise<void> {
   return run;
 }
 
+// Kafka timestamp of the first message in the current buffer. Chunks are keyed
+// and day-bounded by message time rather than wall clock: during replay or
+// backlog catch-up the two diverge by days, and raw/YYYY/MM/DD/ is meant to say
+// when the data was produced, not when we happened to write it out.
+let bufferFirstMs: number | null = null;
+
+function utcDay(ms: number): string {
+  return new Date(ms).toISOString().substring(0, 10);
+}
+
 async function flushAndCommit(): Promise<void> {
   if (buffer.count === 0) return;
-  const key = chunkKey(config.keyPrefix, new Date());
+  const key = chunkKey(config.keyPrefix, new Date(bufferFirstMs ?? Date.now()));
   const bytes = buffer.byteLength;
   const count = buffer.count;
   await putChunk(s3, config.s3Bucket, key, buffer.concat());
   buffer.reset();
+  bufferFirstMs = null;
   if (pendingOffsets.size > 0) {
     await consumer.commitOffsets(
       [...pendingOffsets.entries()].map(([partition, offset]) => ({
@@ -141,11 +152,27 @@ await consumer.run({
   autoCommit: false,
   eachMessage: async ({ partition, message }) => {
     try {
-      if (!message.value) return;
+      const raw = message.value?.toString();
+      // A zero-length value is truthy as a Buffer but splices in as nothing,
+      // producing `{"time":"...","data":}` - unparseable, and it poisons the
+      // whole replay. Still record the offset, otherwise a partition of only
+      // skipped messages never commits and is re-read on every restart.
+      if (!raw) {
+        await withLock(async () => {
+          pendingOffsets.set(partition, message.offset);
+        });
+        return;
+      }
+      const parsedTs = Number(message.timestamp);
+      const ts = Number.isFinite(parsedTs) ? parsedTs : Date.now();
       await withLock(async () => {
-        await buffer.add(
-          `{"time":"${message.timestamp}","data":${message.value?.toString()}}`
-        );
+        // Never let one chunk span two UTC days, so the day prefix is exact by
+        // construction and the key can name the day rather than approximate it.
+        if (bufferFirstMs !== null && utcDay(ts) !== utcDay(bufferFirstMs)) {
+          await flushAndCommit();
+        }
+        await buffer.add(`{"time":"${message.timestamp}","data":${raw}}`);
+        if (bufferFirstMs === null) bufferFirstMs = ts;
         pendingOffsets.set(partition, message.offset);
         await maybeFlush();
       });

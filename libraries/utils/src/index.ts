@@ -6,6 +6,7 @@ import client from 'prom-client';
 export { client as metrics };
 
 export function startMetricsServer(port: number): http.Server {
+  const logger = initLogger('metrics');
   client.collectDefaultMetrics();
   const server = http.createServer((req, res) => {
     if (req.url === '/metrics') {
@@ -23,6 +24,11 @@ export function startMetricsServer(port: number): http.Server {
       res.statusCode = 404;
       res.end();
     }
+  });
+  // an unhandled 'error' (EADDRINUSE) would take the whole service down over
+  // what is only its metrics endpoint
+  server.on('error', (err: Error) => {
+    logger.error({ error: err, port }, 'metrics server error');
   });
   server.listen(port);
   return server;

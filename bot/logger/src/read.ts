@@ -62,8 +62,25 @@ const rl: readline.Interface = readline.createInterface({
   crlfDelay: Infinity,
 });
 
+let replayed = 0;
+let skipped = 0;
+
 for await (const line of rl) {
-  const logData: LogData = JSON.parse(line) as LogData;
+  if (line.trim().length === 0) continue;
+  // One malformed line must not abort a replay that has already produced
+  // thousands of messages with no record of how far it got - re-running would
+  // duplicate everything up to the failure. Skip and keep going.
+  let logData: LogData;
+  try {
+    logData = JSON.parse(line) as LogData;
+    if (!logData || typeof logData.data !== 'object' || logData.data === null) {
+      throw new Error('line has no data object');
+    }
+  } catch (e) {
+    ++skipped;
+    logger.warn({ error: e, line: line.slice(0, 200) }, 'skipping bad line');
+    continue;
+  }
   if (logData.data.endConfig) {
     logData.data.endConfig.update = false;
   }
@@ -77,6 +94,9 @@ for await (const line of rl) {
       },
     ],
   });
+  ++replayed;
 }
+
+logger.info({ replayed, skipped }, 'replay done');
 
 await producer.disconnect();

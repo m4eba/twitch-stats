@@ -11,6 +11,9 @@ import type { Logger } from 'pino';
 import type { Producer } from 'kafkajs';
 import { buildMultiInsert, buildInList, Query } from '@twitch-stats/database';
 
+// max streams per kafka message when announcing ended streams
+const END_CHUNK = 1000;
+
 interface UserOnlineRow {
   user_id: string;
   stream_id: string;
@@ -75,11 +78,13 @@ export default class Processing {
   /* eslint-disable @typescript-eslint/no-explicit-any */
   private async query(query: Query): Promise<any> {
     try {
-      return this.pool.query(query);
+      // must be awaited inside the try, otherwise a rejected query escapes as a
+      // returned promise and the catch below never runs
+      return await this.pool.query(query);
     } catch (e) {
-      this.log.error({ query }, 'query error');
+      this.log.error({ query, error: e }, 'query error');
+      throw e;
     }
-    return;
   }
 
   private assureGameId(game_id: string): string {
@@ -97,6 +102,9 @@ export default class Processing {
     {"id":"2","user_id":"testDocumentId2","user_login":"testDocumentName2","user_name":"","game_id":"2","game_name":"","type":"live","title":"","viewer_count":1000,"started_at":"1970-01-01T00:00:02Z","language":"testBroadcasterLanguage2","thumbnail_url":"https://static-cdn.jtvnw.net/previews-ttv/live_user_testDocumentName2-{width}x{height}.jpg","tag_ids":[],"tags":null,"is_mature":false}
     */
     const data = data2.filter((d) => d.user_id !== 'testDocumentId2');
+    // the filter above can empty a page that was non-empty on entry, and
+    // splitNewAndOld builds an `IN ()` list that is invalid SQL when empty
+    if (data.length === 0) return;
 
     this.log.debug({ time, data }, 'process streams');
     await this.insertProbes(data, time);
@@ -143,41 +151,45 @@ export default class Processing {
       ended_at: moment(r.last_update).add(5, 'minutes').format(),
     }));
 
-    if (ended.length > 0) {
-      const update = buildMultiInsert<EndedStream>(
-        'UPDATE stream AS s SET ended_at = v.ended_at, updated_at = v.ended_at FROM (VALUES ',
-        '$1::bigint,$2::timestamptz',
-        ended,
-        (d: EndedStream) => [d.stream_id, d.ended_at]
-      );
-      update.text +=
-        ') AS v(stream_id, ended_at) WHERE s.stream_id = v.stream_id';
-      await this.query(update);
+    if (ended.length === 0) return;
 
-      await this.query({
-        text: 'DELETE FROM user_online WHERE last_update < $1',
-        values: [endConfig.updateStartTime],
-      });
-    }
+    const update = buildMultiInsert<EndedStream>(
+      'UPDATE stream AS s SET ended_at = v.ended_at, updated_at = v.ended_at FROM (VALUES ',
+      '$1::bigint,$2::timestamptz',
+      ended,
+      (d: EndedStream) => [d.stream_id, d.ended_at]
+    );
+    update.text +=
+      ') AS v(stream_id, ended_at) WHERE s.stream_id = v.stream_id';
+    await this.query(update);
 
+    // Produce before deleting user_online. Those rows are the only record that
+    // these streams still need announcing: if a send fails after the delete,
+    // the sentinel replays, re-runs the SELECT above against an empty table and
+    // the notification is lost permanently - along with the stream's history,
+    // once maintenance drops the partitions. Producing first means a failure
+    // replays as duplicates instead, which both consumers already tolerate.
     if (endConfig.update) {
-      const value: StreamsByIdMessage = {
-        ids: ended.map((e) => e.user_id),
-      };
-      await this.producer.send({
-        topic: this.streamIdTopic,
-        messages: [
-          {
-            key: 'stream',
-            value: JSON.stringify(value),
-          },
-        ],
-      });
+      // chunked so large batches stay within broker message limits
+      for (let i = 0; i < ended.length; i += END_CHUNK) {
+        const value: StreamsByIdMessage = {
+          ids: ended.slice(i, i + END_CHUNK).map((e) => e.user_id),
+        };
+        await this.producer.send({
+          topic: this.streamIdTopic,
+          messages: [
+            {
+              key: 'stream',
+              value: JSON.stringify(value),
+            },
+          ],
+        });
+      }
 
-      // notify the archiver, chunked so large batches stay within message limits
-      for (let i = 0; i < ended.length; i += 1000) {
+      // notify the archiver
+      for (let i = 0; i < ended.length; i += END_CHUNK) {
         const msg: StreamEndedMessage = {
-          streams: ended.slice(i, i + 1000),
+          streams: ended.slice(i, i + END_CHUNK),
         };
         await this.producer.send({
           topic: this.streamEndedTopic,
@@ -190,6 +202,11 @@ export default class Processing {
         });
       }
     }
+
+    await this.query({
+      text: 'DELETE FROM user_online WHERE last_update < $1',
+      values: [endConfig.updateStartTime],
+    });
   }
 
   private async insertLiveStreams(data: Stream[], time: Date): Promise<void> {
@@ -274,10 +291,13 @@ export default class Processing {
     if (data.length === 0) return Promise.resolve();
     const tags: StreamIdTag[] = [];
     data.forEach((d: Stream) => {
-      if (!d.tags) return;
+      // Helix reports "no tags" as either null or [], and changedStreams
+      // treats both as a change. Skipping null here recorded the removal in
+      // `stream` but never terminated the tag history, leaving the previous
+      // tags looking active forever. Normalize both to an empty array.
       tags.push({
         stream_id: d.id,
-        tag: d.tags,
+        tag: d.tags ?? [],
       });
     });
     if (tags.length === 0) return Promise.resolve();
@@ -342,7 +362,11 @@ export default class Processing {
       if (d.title !== split.query[d.id].title) {
         result.title.push(d);
       }
-      if (d.game_id !== split.query[d.id].game_id) {
+      // compare the normalized value: the stored game_id went through
+      // assureGameId, so an uncategorized stream holds '0' in the database
+      // while Helix keeps reporting ''. Comparing raw would report a game
+      // change on every single poll for every uncategorized stream.
+      if (this.assureGameId(d.game_id) !== split.query[d.id].game_id) {
         result.game.push(d);
       }
       const dbtag = split.query[d.id].tags;
