@@ -104,9 +104,22 @@ await consumer.run({
       logger.flush();
     } catch (e) {
       logger.error({ error: e }, 'error in eachMessage');
-      console.log(e);
       logger.flush();
-      process.exit();
+      process.exit(1);
     }
   },
+});
+
+async function shutdown(): Promise<void> {
+  await consumer.disconnect();
+  await producer.disconnect();
+  await pool.end();
+  process.exit(0);
+}
+
+process.on('SIGTERM', () => {
+  shutdown().catch(() => process.exit(1));
+});
+process.on('SIGINT', () => {
+  shutdown().catch(() => process.exit(1));
 });

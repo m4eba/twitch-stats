@@ -98,7 +98,9 @@ function withLock(fn: () => Promise<void>): Promise<void> {
 
 async function flushAndCommit(): Promise<void> {
   if (buffer.count === 0) return;
-  const key = chunkKey(config.keyPrefix, new Date());
+  // key off the first buffered message, not the flush time, so a chunk that
+  // spans UTC midnight is still filed under the day its data belongs to
+  const key = chunkKey(config.keyPrefix, buffer.startedAt ?? new Date());
   const bytes = buffer.byteLength;
   const count = buffer.count;
   await putChunk(s3, config.s3Bucket, key, buffer.concat());
@@ -141,11 +143,19 @@ await consumer.run({
   autoCommit: false,
   eachMessage: async ({ partition, message }) => {
     try {
-      if (!message.value) return;
+      const raw = message.value?.toString();
+      // A zero-length value is truthy as a Buffer but splices in as nothing,
+      // producing `{"time":"...","data":}` - unparseable, and it poisons the
+      // whole replay. Still record the offset, otherwise a partition of only
+      // skipped messages never commits and is re-read on every restart.
+      if (!raw) {
+        await withLock(async () => {
+          pendingOffsets.set(partition, message.offset);
+        });
+        return;
+      }
       await withLock(async () => {
-        await buffer.add(
-          `{"time":"${message.timestamp}","data":${message.value?.toString()}}`
-        );
+        await buffer.add(`{"time":"${message.timestamp}","data":${raw}}`);
         pendingOffsets.set(partition, message.offset);
         await maybeFlush();
       });

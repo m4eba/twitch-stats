@@ -209,7 +209,9 @@ export class Archiver {
   public async flush(): Promise<number> {
     if (this.buffer.count === 0) return 0;
     const count = this.buffer.count;
-    const key = chunkKey(this.keyPrefix, new Date());
+    // key off the first buffered document rather than flush time, so a chunk
+    // spanning UTC midnight stays under the day its data belongs to
+    const key = chunkKey(this.keyPrefix, this.buffer.startedAt ?? new Date());
 
     await putChunk(this.s3, this.bucket, key, this.buffer.concat());
     this.log.info(
@@ -217,15 +219,27 @@ export class Archiver {
       'chunk uploaded'
     );
 
-    const archivedIds = this.index.map((r) => r.stream_id);
+    // ON CONFLICT DO UPDATE raises "cannot affect row a second time" if one
+    // statement touches the same row twice, and the same stream can be
+    // collected more than once within a single buffer window. Keep the last
+    // entry per stream_id, which is the most recently collected one.
+    const dedupe = <T extends { stream_id: string }>(rows: T[]): T[] => {
+      const byId = new Map<string, T>();
+      for (const r of rows) byId.set(r.stream_id, r);
+      return [...byId.values()];
+    };
+    const index = dedupe(this.index);
+    const summaries = dedupe(this.summaries);
+
+    const archivedIds = index.map((r) => r.stream_id);
     const client: PoolClient = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      for (let i = 0; i < this.index.length; i += INSERT_BATCH) {
+      for (let i = 0; i < index.length; i += INSERT_BATCH) {
         const insert = buildMultiInsert<IndexRow>(
           'INSERT INTO archive_stream (stream_id,user_id,started_at,ended_at,object_key,byte_offset,byte_length) VALUES ',
           '$1,$2,$3,$4,$5,$6,$7',
-          this.index.slice(i, i + INSERT_BATCH),
+          index.slice(i, i + INSERT_BATCH),
           (r: IndexRow) => [
             r.stream_id,
             r.user_id,
@@ -236,14 +250,26 @@ export class Archiver {
             r.length,
           ]
         );
-        insert.text += ' ON CONFLICT (stream_id) DO NOTHING';
+        // A stream_id can legitimately reach the archiver twice (a stream that
+        // resurrected after being collected, then ended again). DO NOTHING kept
+        // the older, shorter document indexed while the delete below still ran,
+        // stranding the newer one in S3 with nothing pointing at it. Keep
+        // whichever incarnation ended last.
+        insert.text += ` ON CONFLICT (stream_id) DO UPDATE SET
+             user_id = EXCLUDED.user_id,
+             started_at = EXCLUDED.started_at,
+             ended_at = EXCLUDED.ended_at,
+             object_key = EXCLUDED.object_key,
+             byte_offset = EXCLUDED.byte_offset,
+             byte_length = EXCLUDED.byte_length
+           WHERE EXCLUDED.ended_at >= archive_stream.ended_at`;
         await client.query(insert);
       }
-      for (let i = 0; i < this.summaries.length; i += INSERT_BATCH) {
+      for (let i = 0; i < summaries.length; i += INSERT_BATCH) {
         const insert = buildMultiInsert<SummaryRow>(
           'INSERT INTO stream_summary (stream_id,user_id,started_at,ended_at,duration_seconds,avg_viewers,peak_viewers,probe_count,game_ids,title_count) VALUES ',
           '$1,$2,$3,$4,$5,$6,$7,$8,$9,$10',
-          this.summaries.slice(i, i + INSERT_BATCH),
+          summaries.slice(i, i + INSERT_BATCH),
           (r: SummaryRow) => [
             r.stream_id,
             r.user_id,
@@ -257,20 +283,46 @@ export class Archiver {
             r.title_count,
           ]
         );
-        insert.text += ' ON CONFLICT (stream_id) DO NOTHING';
+        insert.text += ` ON CONFLICT (stream_id) DO UPDATE SET
+             user_id = EXCLUDED.user_id,
+             started_at = EXCLUDED.started_at,
+             ended_at = EXCLUDED.ended_at,
+             duration_seconds = EXCLUDED.duration_seconds,
+             avg_viewers = EXCLUDED.avg_viewers,
+             peak_viewers = EXCLUDED.peak_viewers,
+             probe_count = EXCLUDED.probe_count,
+             game_ids = EXCLUDED.game_ids,
+             title_count = EXCLUDED.title_count
+           WHERE EXCLUDED.ended_at >= stream_summary.ended_at`;
         await client.query(insert);
       }
-      await client.query(
-        'DELETE FROM stream WHERE stream_id = ANY($1::bigint[])',
+      // collectChunk() checked ended_at, but that was up to flushIntervalSeconds
+      // ago and streams-process clears ended_at whenever a stream comes back.
+      // Without this guard a stream that resurrected in the meantime is deleted
+      // while it is still live, and the archive claims it ended at the old time.
+      const deleted = await client.query<{ stream_id: string }>(
+        'DELETE FROM stream WHERE stream_id = ANY($1::bigint[]) AND ended_at IS NOT NULL RETURNING stream_id',
         [archivedIds]
       );
+      const deletedIds = deleted.rows.map((r) => r.stream_id);
+      if (deletedIds.length !== archivedIds.length) {
+        this.log.warn(
+          { archived: archivedIds.length, deleted: deletedIds.length },
+          'some archived streams went live again and were kept'
+        );
+      }
       await client.query(
         'DELETE FROM user_online WHERE stream_id = ANY($1::bigint[])',
-        [archivedIds]
+        [deletedIds]
       );
       await client.query('COMMIT');
     } catch (e) {
-      await client.query('ROLLBACK');
+      // a failing ROLLBACK (dropped connection) must not mask the real error
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackError) {
+        this.log.error({ error: rollbackError }, 'rollback failed');
+      }
       throw e;
     } finally {
       client.release();
