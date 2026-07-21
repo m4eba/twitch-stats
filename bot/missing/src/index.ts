@@ -65,6 +65,11 @@ const kafka: Kafka = new Kafka({
 const client: ReturnType<typeof createClient> = createClient({
   url: config.redisUrl,
 });
+// node-redis emits 'error' on socket failures; without a listener node
+// rethrows them as uncaught exceptions and kills the process.
+client.on('error', (err: Error) => {
+  logger.error({ error: err }, 'redis error');
+});
 await client.connect();
 
 logger.info({ topic: config.topic }, 'subscribe');
@@ -79,17 +84,31 @@ await missing.initRedis();
 
 await consumer.run({
   eachMessage: async ({ message }) => {
-    if (message.value) {
-      logger.debug(
-        {
-          message: JSON.parse(message.value.toString()),
-        },
-        'msg received'
-      );
-      const msg: StreamsMessage = JSON.parse(
-        message.value.toString()
-      ) as StreamsMessage;
-      await missing.update(msg.streams);
+    try {
+      if (message.value) {
+        const msg: StreamsMessage = JSON.parse(
+          message.value.toString()
+        ) as StreamsMessage;
+        logger.debug({ message: msg }, 'msg received');
+        await missing.update(msg.streams);
+      }
+    } catch (e) {
+      logger.error({ error: e }, 'error in eachMessage');
+      process.exit(1);
     }
   },
+});
+
+async function shutdown(): Promise<void> {
+  await consumer.disconnect();
+  await client.quit();
+  await pool.end();
+  process.exit(0);
+}
+
+process.on('SIGTERM', () => {
+  shutdown().catch(() => process.exit(1));
+});
+process.on('SIGINT', () => {
+  shutdown().catch(() => process.exit(1));
 });

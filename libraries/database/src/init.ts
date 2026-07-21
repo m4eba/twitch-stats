@@ -12,7 +12,12 @@ pg.types.setTypeParser(1700, function (val: string) {
   return parseFloat(val);
 });
 
-export async function initPostgres(config: PostgresConfig): Promise<Pool> {
+// Connection settings including TLS. Exported so that callers needing a
+// pg.Client (QueryStream does not work on a Pool) get the same ssl handling
+// instead of hand-rolling a config that silently ignores pgUseSsl/pgCa.
+export async function postgresConfig(
+  config: PostgresConfig
+): Promise<pg.PoolConfig> {
   const c: pg.PoolConfig = {
     host: config.pgHost,
     user: config.pgUser,
@@ -35,6 +40,11 @@ export async function initPostgres(config: PostgresConfig): Promise<Pool> {
       cert: await fs.promises.readFile(config.pgCert, { encoding: 'utf8' }),
     };
   }
+  return c;
+}
+
+export async function initPostgres(config: PostgresConfig): Promise<Pool> {
+  const c = await postgresConfig(config);
   const p = new pg.Pool(c);
   p.on('error', (err: Error) => {
     logger.error(err);

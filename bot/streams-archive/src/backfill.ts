@@ -13,7 +13,7 @@ import {
 } from '@twitch-stats/config';
 import { initPostgres } from '@twitch-stats/database';
 import { initS3 } from '@twitch-stats/storage';
-import type { Pool } from 'pg';
+import type { Pool, QueryResult } from 'pg';
 import pino, { Logger } from 'pino';
 import { ArgumentConfig, parse } from 'ts-command-line-args';
 import { Archiver } from './archiver.js';
@@ -69,12 +69,37 @@ const archiver: Archiver = new Archiver(
 const cutoff = new Date(Date.now() - config.graceSeconds * 1000);
 let total = 0;
 
+// Keyset pagination on (ended_at, stream_id). Rows are only removed from
+// `stream` by archiver.flush(), which fires at flushBytes - so a query without
+// a cursor re-selects the same batch on every iteration and appends duplicate
+// documents until the buffer happens to fill.
+interface BackfillRow {
+  stream_id: string;
+  ended_at: Date;
+}
+
+let afterEndedAt: Date | null = null;
+let afterStreamId: string | null = null;
+
 for (;;) {
-  const result = await pool.query(
-    'SELECT stream_id FROM stream WHERE ended_at IS NOT NULL AND ended_at < $1 ORDER BY ended_at LIMIT $2',
-    [cutoff, config.batchSize]
-  );
+  const result: QueryResult<BackfillRow> =
+    afterEndedAt === null
+      ? await pool.query<BackfillRow>(
+          'SELECT stream_id, ended_at FROM stream WHERE ended_at IS NOT NULL AND ended_at < $1 ORDER BY ended_at, stream_id LIMIT $2',
+          [cutoff, config.batchSize]
+        )
+      : await pool.query<BackfillRow>(
+          `SELECT stream_id, ended_at FROM stream
+            WHERE ended_at IS NOT NULL AND ended_at < $1
+              AND (ended_at, stream_id) > ($2::timestamptz, $3::bigint)
+            ORDER BY ended_at, stream_id LIMIT $4`,
+          [cutoff, afterEndedAt, afterStreamId, config.batchSize]
+        );
   if (result.rows.length === 0) break;
+
+  const lastRow = result.rows[result.rows.length - 1];
+  afterEndedAt = lastRow.ended_at;
+  afterStreamId = lastRow.stream_id;
 
   total += await archiver.collect(result.rows.map((r) => r.stream_id));
   if (archiver.bufferedBytes >= config.flushBytes) {
