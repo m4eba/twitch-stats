@@ -11,6 +11,7 @@ import {
   LogConfigOpt,
   defaultValues,
 } from '@twitch-stats/config';
+import { platformOf } from '@twitch-stats/twitch';
 import type { StreamEndedMessage } from '@twitch-stats/twitch';
 import { initPostgres } from '@twitch-stats/database';
 import { initS3 } from '@twitch-stats/storage';
@@ -184,8 +185,7 @@ await consumer.run({
 
       // wait out the grace period so a stream that briefly drops off and
       // comes back is not archived mid-stream
-      const readyAt =
-        parseInt(message.timestamp) + config.graceSeconds * 1000;
+      const readyAt = parseInt(message.timestamp) + config.graceSeconds * 1000;
       const wait = readyAt - Date.now();
       if (wait > 0) {
         consumer.pause([{ topic, partitions: [partition] }]);
@@ -199,6 +199,7 @@ await consumer.run({
       const msg = JSON.parse(message.value.toString()) as StreamEndedMessage;
       await withLock(async () => {
         const count = await archiver.collect(
+          platformOf(msg),
           msg.streams.map((s) => s.stream_id)
         );
         logger.debug(

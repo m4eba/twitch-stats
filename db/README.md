@@ -29,6 +29,40 @@ maintenance job creates and drops them.
 `archive_stream` (index into the object-storage archive) and `stream_summary`
 (per-stream aggregates for site queries).
 
+## 20260721000004 — platform column
+
+Makes every entity platform-scoped so Kick data can live alongside Twitch.
+`platform text NOT NULL` is added to each table and folded into the primary
+key, and `stream_id` widens from `bigint` to `text` because Kick livestream ids
+are UUIDs. `user_id`, `game_id` and `game_ids` stay `bigint` — Kick's are plain
+integers, and the platform column already separates the namespaces.
+
+Adding the column is a catalog operation (constant default, PG11+), but the
+`stream_id` type change rewrites every table including all partitions of the
+history tables — in production that is ~3.5GB / 30M rows on `probe` alone,
+under an ACCESS EXCLUSIVE lock. Kafka is the write-ahead log for this pipeline,
+so the safe procedure is:
+
+```bash
+kubectl scale -n twstats deploy/twstats-streams-process --replicas=0
+kubectl scale -n twstats deploy/twstats-streams-archive --replicas=0
+# messages queue in kafka while the consumers are down
+
+# optional but worthwhile: the *_legacy partitions are ~1.1GB of the rewrite
+# and hold no rows once the backfill is done (see below)
+psql -c 'DROP TABLE probe_legacy, stream_title_legacy, stream_game_legacy, stream_tags_legacy;'
+
+dbmate --migrations-dir db/migrations up
+
+kubectl scale -n twstats deploy/twstats-streams-process --replicas=1
+kubectl scale -n twstats deploy/twstats-streams-archive --replicas=1
+# the consumers replay the backlog
+```
+
+The `platform` default is dropped at the end of the migration: every writer
+sets it explicitly, so a missed code path should fail loudly rather than
+silently file Kick rows under `twitch`.
+
 ## After the backfill
 
 Once `streams-archive backfill` has drained all historical ended streams and

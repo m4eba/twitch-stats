@@ -9,23 +9,27 @@ datasource db {
 }
 
 model game {
-  game_id     BigInt   @id
+  game_id     BigInt
   name        String
   box_art_url String
   updated_at  DateTime @db.Timestamptz(6)
+  platform    String
+
+  @@id([platform, game_id])
 }
 
 model probe {
-  stream_id BigInt
+  stream_id String
   user_id   BigInt
   viewers   Int
   time      DateTime @db.Timestamptz(6)
+  platform  String
 
-  @@id([stream_id, user_id, time])
+  @@id([platform, stream_id, user_id, time])
 }
 
 model stream {
-  stream_id  BigInt    @id
+  stream_id  String
   user_id    BigInt
   title      String
   tags       String[]
@@ -33,51 +37,51 @@ model stream {
   started_at DateTime  @db.Timestamptz(6)
   ended_at   DateTime? @db.Timestamptz(6)
   updated_at DateTime? @db.Timestamptz(6)
+  platform   String
 
+  @@id([platform, stream_id])
   @@index([ended_at])
   @@index([started_at])
   @@index([updated_at])
-  @@index([user_id])
+  @@index([platform, user_id], map: "stream_user_id_idx")
 }
 
 model stream_game {
-  stream_id BigInt
+  stream_id String
   game_id   BigInt
   time      DateTime @db.Timestamptz(6)
+  platform  String
 
-  @@id([stream_id, game_id, time])
-}
-
-model stream_tag_ids {
-  stream_id BigInt
-  tag_id    String   @db.Uuid
-  time      DateTime @db.Timestamptz(6)
-
-  @@id([stream_id, tag_id, time], map: "stream_tags_pkey")
+  @@id([platform, stream_id, game_id, time])
 }
 
 /// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
 model stream_tags {
-  stream_id BigInt
+  stream_id String
   tag       String[]
   time      DateTime @db.Timestamptz(6)
+  platform  String
 
-  //@@id([stream_id, tag, time], map: "stream_tags_pkey1")
-
+  // prisma cannot represent an array column inside a primary key ("ID
+  // definitions must reference only required fields"), so the real PK
+  // (platform, stream_id, tag, time) stays commented out and the model is
+  // ignored. Postgres remains the source of truth; see db/README.md.
+  //@@id([platform, stream_id, tag, time])
 
   @@ignore
 }
 
 model stream_title {
-  stream_id BigInt
+  stream_id String
   title     String
   time      DateTime @db.Timestamptz(6)
+  platform  String
 
-  @@id([stream_id, title, time])
+  @@id([platform, stream_id, title, time])
 }
 
 model streamers {
-  user_id          BigInt    @id
+  user_id          BigInt
   login            String
   display_name     String
   type             String
@@ -89,8 +93,10 @@ model streamers {
   vods_updated_at  DateTime? @db.Timestamptz(6)
   vods_forever     Boolean   @default(false)
   updated_at       DateTime? @db.Timestamptz(6)
+  platform         String
 
-  @@index([login])
+  @@id([platform, user_id])
+  @@index([platform, login], map: "streamers_login_idx")
   @@index([updated_at])
   @@index([vods_updated_at])
 }
@@ -99,16 +105,18 @@ model streamers_follower_probe {
   user_id  BigInt
   follower BigInt
   time     DateTime @db.Timestamptz(6)
+  platform String
 
-  @@id([user_id, time])
+  @@id([platform, user_id, time])
 }
 
 model streamers_views_probe {
   user_id    BigInt
   view_count BigInt
   time       DateTime @db.Timestamptz(6)
+  platform   String
 
-  @@id([user_id, time])
+  @@id([platform, user_id, time])
 }
 
 model tags {
@@ -121,26 +129,44 @@ model tags {
 
 model user_online {
   user_id     BigInt
-  stream_id   BigInt
+  stream_id   String
   last_update DateTime @db.Timestamptz(6)
+  platform    String
 
-  @@id([stream_id, user_id])
+  @@id([platform, stream_id, user_id])
   @@index([last_update])
 }
 
-model vod {
-  vod_id        BigInt    @id
-  user_id       BigInt
-  title         String
-  duration      Int
-  created_at    DateTime  @db.Timestamptz(6)
-  url           String
-  thumbnail_url String
-  view_count    Int
-  viewable      Boolean   @default(true)
-  removed       Boolean   @default(false)
-  updated_at    DateTime? @db.Timestamptz(6)
+model archive_stream {
+  stream_id   String
+  user_id     BigInt
+  started_at  DateTime @db.Timestamptz(6)
+  ended_at    DateTime @db.Timestamptz(6)
+  object_key  String
+  byte_offset BigInt
+  byte_length Int
+  platform    String
 
-  @@index([created_at])
-  @@index([user_id])
+  @@id([platform, stream_id])
+  @@index([user_id, started_at], map: "archive_stream_user_idx")
+  @@index([platform, user_id, started_at], map: "archive_stream_user_started_idx")
+}
+
+model stream_summary {
+  stream_id        String
+  user_id          BigInt
+  started_at       DateTime @db.Timestamptz(6)
+  ended_at         DateTime @db.Timestamptz(6)
+  duration_seconds Int
+  avg_viewers      Float    @db.Real
+  peak_viewers     Int
+  probe_count      Int
+  game_ids         BigInt[]
+  title_count      Int
+  platform         String
+
+  @@id([platform, stream_id])
+  @@index([started_at], map: "stream_summary_started_idx")
+  @@index([user_id, started_at], map: "stream_summary_user_idx")
+  @@index([platform, user_id, started_at], map: "stream_summary_user_started_idx")
 }

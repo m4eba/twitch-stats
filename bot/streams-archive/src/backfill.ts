@@ -13,6 +13,7 @@ import {
 } from '@twitch-stats/config';
 import { initPostgres } from '@twitch-stats/database';
 import { initS3 } from '@twitch-stats/storage';
+import type { Platform } from '@twitch-stats/twitch';
 import type { Pool } from 'pg';
 import pino, { Logger } from 'pino';
 import { ArgumentConfig, parse } from 'ts-command-line-args';
@@ -70,13 +71,22 @@ const cutoff = new Date(Date.now() - config.graceSeconds * 1000);
 let total = 0;
 
 for (;;) {
-  const result = await pool.query(
-    'SELECT stream_id FROM stream WHERE ended_at IS NOT NULL AND ended_at < $1 ORDER BY ended_at LIMIT $2',
+  const result = await pool.query<{ platform: Platform; stream_id: string }>(
+    'SELECT platform, stream_id FROM stream WHERE ended_at IS NOT NULL AND ended_at < $1 ORDER BY ended_at LIMIT $2',
     [cutoff, config.batchSize]
   );
   if (result.rows.length === 0) break;
 
-  total += await archiver.collect(result.rows.map((r) => r.stream_id));
+  // a batch can straddle platforms, and collect() is scoped to one
+  const byPlatform = new Map<Platform, string[]>();
+  for (const r of result.rows) {
+    const list = byPlatform.get(r.platform);
+    if (list) list.push(r.stream_id);
+    else byPlatform.set(r.platform, [r.stream_id]);
+  }
+  for (const [platform, ids] of byPlatform) {
+    total += await archiver.collect(platform, ids);
+  }
   if (archiver.bufferedBytes >= config.flushBytes) {
     await archiver.flush();
     logger.info({ total }, 'backfill progress');

@@ -5,6 +5,7 @@ import {
   Stream,
   StreamsMessage,
   StreamsByIdMessage,
+  platformOf,
 } from '@twitch-stats/twitch';
 import {
   KafkaConfig,
@@ -123,6 +124,9 @@ await consumer.run({
     }
     if (message.key.toString() === 'stream') {
       const data = JSON.parse(message.value.toString()) as StreamsByIdMessage;
+      // This service re-confirms streams against Helix, so it only handles
+      // twitch. Kick end-batches are acked and dropped.
+      if (platformOf(data) !== 'twitch') return;
       await query(logger, config.toTopic, data.ids, producer);
     }
   },
