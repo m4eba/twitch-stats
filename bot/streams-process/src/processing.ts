@@ -82,6 +82,47 @@ export default class Processing {
     return;
   }
 
+  // Postgres encodes the bind-parameter count as an int16, so one statement can
+  // carry at most 65535 parameters. buildMultiInsert will happily build past
+  // that: the count silently wraps, the wire protocol desyncs and the server
+  // rejects the bind with 08P01
+  // ("bind message has N parameter formats but 0 parameters").
+  //
+  // This is unrecoverable on its own — the consumer dies before committing its
+  // offset, Kafka redelivers the same batch, and it loops forever. processEnd
+  // hit it with 39824 stale streams x 2 params = 79648 (79648 - 65536 = 14112,
+  // the number in the error) and crashlooped 1321 times over 11 days.
+  //
+  // Every multi-row statement goes through here so the row count can never
+  // decide whether the query is valid.
+  private static readonly MAX_BIND_PARAMS = 60000;
+
+  private async queryMulti<T>(
+    stmt: string,
+    template: string,
+    data: T[],
+    mapping: (d: T) => Array<any>,
+    suffix = ''
+  ): Promise<void> {
+    if (data.length === 0) return;
+    // same way buildMultiInsert derives the column count from the template
+    const perRow = template.split(/\$\d+/).length - 1;
+    const chunkSize = Math.max(
+      1,
+      Math.floor(Processing.MAX_BIND_PARAMS / Math.max(1, perRow))
+    );
+    for (let i = 0; i < data.length; i += chunkSize) {
+      const query = buildMultiInsert<T>(
+        stmt,
+        template,
+        data.slice(i, i + chunkSize),
+        mapping
+      );
+      query.text += suffix;
+      await this.query(query);
+    }
+  }
+
   private assureGameId(game_id: string): string {
     if (!game_id) return '0';
     if (game_id.length === 0) return '0';
@@ -144,15 +185,13 @@ export default class Processing {
     }));
 
     if (ended.length > 0) {
-      const update = buildMultiInsert<EndedStream>(
+      await this.queryMulti<EndedStream>(
         'UPDATE stream AS s SET ended_at = v.ended_at, updated_at = v.ended_at FROM (VALUES ',
         '$1::bigint,$2::timestamptz',
         ended,
-        (d: EndedStream) => [d.stream_id, d.ended_at]
+        (d: EndedStream) => [d.stream_id, d.ended_at],
+        ') AS v(stream_id, ended_at) WHERE s.stream_id = v.stream_id'
       );
-      update.text +=
-        ') AS v(stream_id, ended_at) WHERE s.stream_id = v.stream_id';
-      await this.query(update);
 
       await this.query({
         text: 'DELETE FROM user_online WHERE last_update < $1',
@@ -195,36 +234,31 @@ export default class Processing {
   private async insertLiveStreams(data: Stream[], time: Date): Promise<void> {
     if (data.length === 0) return Promise.resolve();
     // insert live
-    const insert = buildMultiInsert<Stream>(
+    return this.queryMulti<Stream>(
       'INSERT INTO user_online (user_id,stream_id,last_update) VALUES ',
       '$1,$2,$3',
       data,
-      (d: Stream) => [d.user_id, d.id, time]
+      (d: Stream) => [d.user_id, d.id, time],
+      ' ON CONFLICT (user_id,stream_id) DO UPDATE SET last_update=EXCLUDED.last_update'
     );
-    insert.text +=
-      ' ON CONFLICT (user_id,stream_id) DO UPDATE SET last_update=EXCLUDED.last_update';
-
-    return this.query(insert);
   }
 
   private async insertProbes(data: Stream[], time: Date): Promise<void> {
     if (data.length === 0) return Promise.resolve();
     // insert into probe
-    const insert = buildMultiInsert<Stream>(
+    return this.queryMulti<Stream>(
       'INSERT INTO probe (stream_id,user_id,viewers,time) VALUES ',
       '$1,$2,$3,$4',
       data,
-      (d: Stream) => [d.id, d.user_id, d.viewer_count, time]
+      (d: Stream) => [d.id, d.user_id, d.viewer_count, time],
+      ' ON CONFLICT (stream_id, user_id,time) DO NOTHING'
     );
-    insert.text += ' ON CONFLICT (stream_id, user_id,time) DO NOTHING';
-
-    return this.query(insert);
   }
 
   private async insertUpdateStreams(data: Stream[], time: Date): Promise<void> {
     if (data.length === 0) return Promise.resolve();
     // insert into stream
-    const insert = buildMultiInsert<Stream>(
+    return this.queryMulti<Stream>(
       'INSERT INTO stream (stream_id,user_id,title,tags,game_id,started_at,updated_at) VALUES ',
       '$1,$2,$3,$4,$5,$6,$7',
       data,
@@ -236,38 +270,31 @@ export default class Processing {
         this.assureGameId(d.game_id),
         d.started_at,
         time,
-      ]
+      ],
+      ' ON CONFLICT (stream_id) DO UPDATE SET title = EXCLUDED.title, tags = EXCLUDED.tags, game_id = EXCLUDED.game_id, ended_at = null, updated_at = EXCLUDED.updated_at'
     );
-    insert.text +=
-      ' ON CONFLICT (stream_id) DO UPDATE SET title = EXCLUDED.title, tags = EXCLUDED.tags, game_id = EXCLUDED.game_id, ended_at = null, updated_at = EXCLUDED.updated_at';
-
-    return this.query(insert);
   }
 
   private async insertStreamsGames(data: Stream[], time: Date): Promise<void> {
     if (data.length === 0) return Promise.resolve();
-    const insert = buildMultiInsert<Stream>(
+    return this.queryMulti<Stream>(
       'INSERT INTO stream_game (stream_id,game_id,time) VALUES ',
       '$1,$2,$3',
       data,
-      (d) => [d.id, this.assureGameId(d.game_id), time]
+      (d) => [d.id, this.assureGameId(d.game_id), time],
+      ' ON CONFLICT (stream_id, game_id,time) DO NOTHING'
     );
-    insert.text += ' ON CONFLICT (stream_id, game_id,time) DO NOTHING';
-
-    return this.query(insert);
   }
 
   private async insertStreamsTitles(data: Stream[], time: Date): Promise<void> {
     if (data.length === 0) return Promise.resolve();
-    const insert = buildMultiInsert<Stream>(
+    return this.queryMulti<Stream>(
       'INSERT INTO stream_title (stream_id,title,time) VALUES ',
       '$1,$2,$3',
       data,
-      (d: Stream) => [d.id, d.title, time]
+      (d: Stream) => [d.id, d.title, time],
+      ' ON CONFLICT (stream_id, title,time) DO NOTHING'
     );
-    insert.text += ' ON CONFLICT (stream_id, title,time) DO NOTHING';
-
-    return this.query(insert);
   }
 
   private async insertStreamsTags(data: Stream[], time: Date): Promise<void> {
@@ -281,15 +308,13 @@ export default class Processing {
       });
     });
     if (tags.length === 0) return Promise.resolve();
-    const insert = buildMultiInsert<StreamIdTag>(
+    return this.queryMulti<StreamIdTag>(
       'INSERT INTO stream_tags (stream_id,tag,time) VALUES ',
       '$1,$2,$3',
       tags,
-      (d: StreamIdTag) => [d.stream_id, d.tag, time]
+      (d: StreamIdTag) => [d.stream_id, d.tag, time],
+      ' ON CONFLICT (stream_id, tag, time) DO NOTHING'
     );
-    insert.text += ' ON CONFLICT (stream_id, tag, time) DO NOTHING';
-
-    return this.query(insert);
   }
 
   private async splitNewAndOld(data: Array<Stream>): Promise<Split> {
