@@ -83,6 +83,13 @@ export default class Processing {
       return await this.pool.query(query);
     } catch (e) {
       this.log.error({ query, error: e }, 'query error');
+      // The rethrow is load-bearing: do not turn this into a log-and-continue.
+      // queryMulti splits a batch into several statements, and processEnd
+      // deletes user_online only after the update and the kafka sends. If a
+      // failure were swallowed here, the remaining chunks would still run and
+      // the DELETE would still fire, permanently losing the streams that never
+      // got an ended_at. Propagating leaves the kafka offset uncommitted so the
+      // batch is redelivered and replays cleanly.
       throw e;
     }
   }
