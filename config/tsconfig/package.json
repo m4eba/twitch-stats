@@ -1,6 +1,6 @@
 {
   "name": "@twitch-stats/config-tsconfig",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "private": true,
   "files": [
     "base.json",
