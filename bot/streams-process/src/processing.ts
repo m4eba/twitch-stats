@@ -93,8 +93,12 @@ export default class Processing {
   // hit it with 39824 stale streams x 2 params = 79648 (79648 - 65536 = 14112,
   // the number in the error) and crashlooped 1321 times over 11 days.
   //
-  // Every multi-row statement goes through here so the row count can never
-  // decide whether the query is valid.
+  // Every buildMultiInsert caller goes through here so the row count can never
+  // decide whether the query is valid. splitNewAndOld is the one multi-row
+  // statement not covered: it builds an IN-list via buildInList at one
+  // parameter per row, and is bounded by the producer's page size, so it cannot
+  // reach the limit. If that ever becomes unbounded it needs the same
+  // treatment.
   private static readonly MAX_BIND_PARAMS = 60000;
 
   private async queryMulti<T>(
