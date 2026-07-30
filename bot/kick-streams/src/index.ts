@@ -126,7 +126,7 @@ for (;;) {
   if (cursor === undefined) break;
 }
 
-logger.debug({ count, skipped, pages: page }, 'count');
+logger.info({ count, skipped, pages: page }, 'sweep complete');
 
 // End detection sentinel. Emitted after the loop so it covers every exit path,
 // but deliberately not when the loop throws: it marks every kick stream not
@@ -154,6 +154,6 @@ await producer.sendBatch({
     },
   ],
 });
-logger.debug({ startTime }, 'sentinel sent');
+logger.info({ startTime }, 'sentinel sent');
 
 await producer.disconnect();

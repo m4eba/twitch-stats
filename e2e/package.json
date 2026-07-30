@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test:e2e": "node --import tsx run-e2e.ts"
+    "test:e2e": "node --import tsx run-e2e.ts",
+    "test:live": "node --env-file=.env --import tsx run-live.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "~3.370.0",
@@ -14,7 +15,8 @@
     "@twitch-stats/streams-process": "*",
     "@twitch-stats/twitch": "*",
     "pg": "~8.7.3",
-    "pino": "~7.8.0"
+    "pino": "~7.8.0",
+    "@twitch-stats/kick-streams": "*"
   },
   "devDependencies": {
     "@types/pg": "~8.6.4"

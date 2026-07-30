@@ -14,7 +14,8 @@
     "lint": "turbo run lint",
     "test": "turbo run test",
     "test:e2e": "turbo run build && npm run test:e2e --workspace=@twitch-stats/e2e",
-    "format": "prettier --write \"**/*.{ts,tsx,md}\""
+    "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+    "test:live": "turbo run build && npm run test:live --workspace=@twitch-stats/e2e"
   },
   "devDependencies": {
     "eslint-config-custom": "*",
