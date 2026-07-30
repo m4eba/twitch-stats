@@ -237,8 +237,11 @@ export default class Processing {
     }
 
     await this.query({
-      text: 'DELETE FROM user_online WHERE last_update < $1',
-      values: [endConfig.updateStartTime],
+      // platform-scoped for the same reason as the SELECT above: without it a
+      // sweep of one platform clears the other's live rows and silently breaks
+      // its end detection
+      text: 'DELETE FROM user_online WHERE platform = $1 AND last_update < $2',
+      values: [platform, endConfig.updateStartTime],
     });
   }
 

@@ -114,11 +114,8 @@ test('processEnd on an empty sweep publishes nothing and ends no streams', async
     [tw.id]
   );
   assert.equal(row.rows[0].ended_at, null);
-  // update:true still fires the id message, but with an empty id list
-  const idMsg = sent.find((m) => m.topic === 'stream-id');
-  assert.deepEqual((idMsg?.value as { ids: string[] }).ids, []);
-  assert.equal(
-    sent.find((m) => m.topic === 'stream-ended'),
-    undefined
-  );
+  // Nothing ended, so processEnd returns before producing: an empty id list is
+  // a no-op for streams-id and an empty ended list is a no-op for the archiver,
+  // so neither message is worth sending.
+  assert.deepEqual(sent, []);
 });
