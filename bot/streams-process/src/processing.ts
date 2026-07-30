@@ -11,6 +11,12 @@ import moment from 'moment';
 import type { Logger } from 'pino';
 import type { Producer } from 'kafkajs';
 import { buildMultiInsert, buildInList, Query } from '@twitch-stats/database';
+import {
+  assureGameId,
+  changedStreams,
+  DBStream,
+  Split,
+} from './compare.js';
 
 // max streams per kafka message when announcing ended streams
 const END_CHUNK = 1000;
@@ -24,35 +30,6 @@ interface UserOnlineRow {
 interface StreamIdTag {
   stream_id: string;
   tag: string[];
-}
-
-interface DBStream {
-  stream_id: string;
-  user_id: string;
-  title: string;
-  tags?: string[];
-  game_id: string;
-  started_at: string;
-  ended_at: string;
-  updated_at: string;
-}
-
-interface Split {
-  new: {
-    ids: Array<string>;
-    data: Array<Stream>;
-  };
-  old: {
-    ids: Array<string>;
-    data: Array<Stream>;
-  };
-  query: { [id: string]: DBStream };
-}
-
-interface Changed {
-  title: Array<Stream>;
-  game: Array<Stream>;
-  tags: Array<Stream>;
 }
 
 export default class Processing {
@@ -140,13 +117,6 @@ export default class Processing {
     }
   }
 
-  private assureGameId(game_id: string): string {
-    if (!game_id) return '0';
-    if (game_id.length === 0) return '0';
-    if (!/^\d+$/.test(game_id)) return '0';
-    return game_id;
-  }
-
   public async processStreams(
     platform: Platform,
     time: Date,
@@ -182,7 +152,7 @@ export default class Processing {
 
     // look through the select we made before the insert
     // and find streams with changed title or game
-    const change = this.changedStreams(split);
+    const change = changedStreams(split);
     await this.insertStreamsGames(platform, change.game, time);
     await this.insertStreamsTitles(platform, change.title, time);
     await this.insertStreamsTags(platform, change.tags, time);
@@ -321,7 +291,7 @@ export default class Processing {
         d.user_id,
         d.title,
         d.tags,
-        this.assureGameId(d.game_id),
+        assureGameId(d.game_id),
         d.started_at,
         time,
       ],
@@ -339,7 +309,7 @@ export default class Processing {
       'INSERT INTO stream_game (platform,stream_id,game_id,time) VALUES ',
       '$1,$2,$3,$4',
       data,
-      (d) => [platform, d.id, this.assureGameId(d.game_id), time],
+      (d) => [platform, d.id, assureGameId(d.game_id), time],
       ' ON CONFLICT (platform,stream_id,game_id,time) DO NOTHING'
     );
   }
@@ -430,31 +400,4 @@ export default class Processing {
     return result;
   }
 
-  private changedStreams(split: Split): Changed {
-    const result: Changed = {
-      title: [],
-      game: [],
-      tags: [],
-    };
-
-    for (let i = 0; i < split.old.data.length; ++i) {
-      const d = split.old.data[i];
-      if (d.title !== split.query[d.id].title) {
-        result.title.push(d);
-      }
-      // compare the normalized value: the stored game_id went through
-      // assureGameId, so an uncategorized stream holds '0' in the database
-      // while Helix keeps reporting ''. Comparing raw would report a game
-      // change on every single poll for every uncategorized stream.
-      if (this.assureGameId(d.game_id) !== split.query[d.id].game_id) {
-        result.game.push(d);
-      }
-      const dbtag = split.query[d.id].tags;
-      if ((d.tags ? d.tags.join(',') : '') !== (dbtag ? dbtag.join(',') : '')) {
-        result.tags.push(d);
-      }
-    }
-
-    return result;
-  }
 }

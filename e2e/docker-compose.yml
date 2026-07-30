@@ -1,0 +1,31 @@
+# Ephemeral infra for the e2e suite. Ports match hack's old registrations
+# (5447 postgres, 9008/9009 minio) so nothing collides with a running stack.
+services:
+  postgres:
+    image: postgres:15-alpine
+    ports:
+      - '5447:5432'
+    environment:
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: tw_stats
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ':9001'
+    # tmpfs so a nearly-full host disk doesn't trip minio's free-space threshold
+    volumes:
+      - type: tmpfs
+        target: /data
+        tmpfs:
+          size: 536870912
+    ports:
+      - '9008:9000'
+      - '9009:9001'
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin

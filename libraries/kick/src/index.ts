@@ -98,7 +98,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function isAbortError(e: unknown): boolean {
+export function isAbortError(e: unknown): boolean {
   return (
     typeof e === 'object' &&
     e !== null &&
@@ -106,7 +106,7 @@ function isAbortError(e: unknown): boolean {
   );
 }
 
-function backoffMs(tries: number): number {
+export function backoffMs(tries: number): number {
   return Math.min(BACKOFF_BASE_MS * Math.pow(2, tries - 1), BACKOFF_CAP_MS);
 }
 
@@ -173,7 +173,7 @@ export async function init(cfg: KickConfig): Promise<void> {
   await fetchToken();
 }
 
-function buildUrl(
+export function buildUrl(
   path: string,
   params?: Record<string, string | string[]> | null
 ): string {

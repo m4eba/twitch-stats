@@ -1,0 +1,37 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: ['main']
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      # build first: the `test` turbo task depends on ^build because packages
+      # import each other's compiled dist/.
+      - run: npm run build
+      - run: npm run lint
+      - run: npm run test
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # the orchestrator spins up Postgres + MinIO via docker compose (present
+      # on GitHub-hosted runners), applies migrations, runs the suite, and
+      # tears the containers down in a finally block.
+      - run: npm run test:e2e --workspace=@twitch-stats/e2e

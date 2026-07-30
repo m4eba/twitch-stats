@@ -1,7 +1,7 @@
 {
   "extends": "@twitch-stats/config-tsconfig/library.json",
   "include": ["."],
-  "exclude": ["dist", "build", "node_modules"],
+  "exclude": ["dist", "build", "node_modules", "**/*.test.ts"],
   "compilerOptions": {
     "outDir": "./dist"
   }
