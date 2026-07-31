@@ -140,8 +140,15 @@ export default class Missing {
     this.log.info({}, 'initialized');
   }
 
-  public async update(streams: Stream[]): Promise<void> {
-    if (streams.length === 0) return;
+  public async update(streams: Stream[] | undefined): Promise<void> {
+    // Not every message on twitch-stats-streams carries a streams array -- the
+    // batch-end marker sends only endConfig. streams-process tolerates that by
+    // swallowing the error in its catch; this consumer's catch calls
+    // process.exit(1), and when the TypeError escaped the try entirely kafkajs
+    // stopped the consumer while the process stayed alive. The pod then sat
+    // 1/1 Running with 0 restarts for 4 days, consuming nothing and building
+    // 1.4M messages of lag (2026-07-26).
+    if (!streams || streams.length === 0) return;
     const user_ids: string[] = [];
     const game_ids: string[] = [];
     const game_hash = new Set<string>();
