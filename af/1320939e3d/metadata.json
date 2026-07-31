@@ -1,0 +1,39 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "af1320939e3d",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "bot/logger/package.json",
+    "bot/missing/package.json",
+    "bot/streams-archive/package.json",
+    "bot/streams-id/package.json",
+    "bot/streams-process/package.json",
+    "bot/streams/package.json",
+    "config/eslint-config-custom/package.json",
+    "config/tsconfig/package.json",
+    "libraries/config/package.json",
+    "libraries/database/package.json",
+    "libraries/prisma/package.json",
+    "libraries/storage/package.json",
+    "libraries/twitch/package.json",
+    "libraries/utils/package.json"
+  ],
+  "sessions": [
+    {
+      "metadata": "/af/1320939e3d/0/metadata.json",
+      "transcript": "/af/1320939e3d/0/full.jsonl",
+      "compact_transcript": "/af/1320939e3d/0/transcript.jsonl",
+      "content_hash": "/af/1320939e3d/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 5,
+    "cache_creation_tokens": 1231,
+    "cache_read_tokens": 118058,
+    "output_tokens": 640,
+    "api_call_count": 3
+  }
+}
