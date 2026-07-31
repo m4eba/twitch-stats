@@ -1,6 +1,6 @@
 {
   "name": "@twitch-stats/streams-archive",
-  "version": "0.0.15",
+  "version": "0.0.16",
   "bin": {
     "archive": "dist/index.js",
     "backfill": "dist/backfill.js",
