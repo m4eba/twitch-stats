@@ -133,7 +133,7 @@ do {
     break;
   }
 } while (cursor);
-logger.debug({ count }, 'count');
+logger.info({ count, pages: page }, 'sweep complete');
 
 // The sentinel drives end detection in streams-process, and must be emitted on
 // every successful exit path - both the minViewers cutoff above and normal
@@ -163,6 +163,6 @@ await producer.sendBatch({
     },
   ],
 });
-logger.debug({ startTime }, 'sentinel sent');
+logger.info({ startTime }, 'sentinel sent');
 
 await producer.disconnect();

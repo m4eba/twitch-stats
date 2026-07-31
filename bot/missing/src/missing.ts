@@ -7,8 +7,20 @@ import {
   insertViewsProbes,
   insertUpdateGames,
 } from '@twitch-stats/database';
-import type { Game, User, Stream, PaginatedResult } from '@twitch-stats/twitch';
-import Prefix from './prefix.js';
+import type { GameRow, StreamerRow } from '@twitch-stats/database';
+import type {
+  Game,
+  Platform,
+  User,
+  Stream,
+  PaginatedResult,
+} from '@twitch-stats/twitch';
+import Prefix, { scoped } from './prefix.js';
+
+// Platforms this service maintains dimension rows for. Twitch needs a helix
+// round-trip because GET /streams carries neither avatars nor box art; kick's
+// listing already includes both, so its rows come straight off the message.
+const PLATFORMS: Platform[] = ['twitch', 'kick'];
 
 export default class Missing {
   private log: Logger;
@@ -66,10 +78,14 @@ export default class Missing {
     }
   }
 
-  public async checkIds(prefix: string, ids: string[]): Promise<string[]> {
+  public async checkIds(
+    platform: Platform,
+    prefix: string,
+    ids: string[]
+  ): Promise<string[]> {
     if (ids.length === 0) return [];
-    const a = this.addPrefix(prefix, ids);
-    this.log.trace({ prefix, ids, arguments: a }, 'checkIdx');
+    const a = this.addPrefix(scoped(platform, prefix), ids);
+    this.log.trace({ platform, prefix, count: ids.length }, 'checkIds');
     const existing_ids = await this.redis.mGet(a);
     let new_ids = new Array<string>(ids.length);
     let idx = 0;
@@ -83,8 +99,11 @@ export default class Missing {
     return new_ids;
   }
 
-  private async getTimeFromRedis(prefix: string): Promise<string> {
-    let user_update = await this.redis.get(prefix + 'time');
+  private async getTimeFromRedis(
+    platform: Platform,
+    prefix: string
+  ): Promise<string> {
+    let user_update = await this.redis.get(scoped(platform, prefix) + 'time');
     try {
       if (user_update) {
         user_update = new Date(Date.parse(user_update)).toISOString();
@@ -97,50 +116,58 @@ export default class Missing {
   }
 
   public async initRedis(): Promise<void> {
-    const user_update = await this.getTimeFromRedis(Prefix.user);
-
-    this.log.info({ update: user_update }, 'initRedis update user from');
-    // streamers.created_at is nullable and nothing ever writes it, so
-    // `created_at > $1` was NULL for every row and the user warm-start always
-    // returned nothing. insertUpdateStreamers maintains updated_at.
-    const users = await this.pool.query({
-      text: 'select user_id, updated_at from streamers where updated_at > $1 order by updated_at desc',
-      values: [user_update],
-      rowMode: 'array',
-    });
-
-    await this.insertIds(this.valuesFromQueryResult(Prefix.user, users));
-    if (users.rows.length > 0) {
-      // node-pg returns timestamptz as a Date, which the redis client rejects
-      // with `TypeError: Invalid argument type`
-      await this.redis.set(
-        Prefix.user + 'time',
-        new Date(users.rows[0][1]).toISOString()
+    for (const platform of PLATFORMS) {
+      await this.warmStart(
+        platform,
+        Prefix.user,
+        'select user_id, updated_at from streamers where platform = $1 and updated_at > $2 order by updated_at desc'
+      );
+      await this.warmStart(
+        platform,
+        Prefix.game,
+        'select game_id, updated_at from game where platform = $1 and updated_at > $2 order by updated_at desc'
       );
     }
-
-    // don't have created column, use updated
-    const game_update = await this.getTimeFromRedis(Prefix.game);
-
-    this.log.info({ update: game_update }, 'initRedis update games from');
-    const games = await this.pool.query({
-      text: 'select game_id, updated_at from game where updated_at > $1 order by updated_at desc',
-      values: [game_update],
-      rowMode: 'array',
-    });
-
-    await this.insertIds(this.valuesFromQueryResult(Prefix.game, games));
-    if (games.rows.length > 0) {
-      await this.redis.set(
-        Prefix.game + 'time',
-        new Date(games.rows[0][1]).toISOString()
-      );
-    }
-
     this.log.info({}, 'initialized');
   }
 
-  public async update(streams: Stream[] | undefined): Promise<void> {
+  // Reload the ids postgres already knows about so a cold or lost redis does
+  // not send the whole population back through the API. Note streamers.
+  // created_at is nullable and never written by anything, so the watermark has
+  // to be updated_at, which insertUpdateStreamers does maintain.
+  private async warmStart(
+    platform: Platform,
+    prefix: string,
+    sql: string
+  ): Promise<void> {
+    const since = await this.getTimeFromRedis(platform, prefix);
+    this.log.info({ platform, prefix, since }, 'warm start from postgres');
+    const rows = await this.pool.query({
+      text: sql,
+      values: [platform, since],
+      rowMode: 'array',
+    });
+    await this.insertIds(
+      this.valuesFromQueryResult(scoped(platform, prefix), rows)
+    );
+    if (rows.rows.length > 0) {
+      // node-pg returns timestamptz as a Date, which the redis client rejects
+      // with `TypeError: Invalid argument type`
+      await this.redis.set(
+        scoped(platform, prefix) + 'time',
+        new Date(rows.rows[0][1]).toISOString()
+      );
+    }
+    this.log.info(
+      { platform, prefix, loaded: rows.rows.length },
+      'warm start done'
+    );
+  }
+
+  public async update(
+    platform: Platform,
+    streams: Stream[] | undefined
+  ): Promise<void> {
     // Not every message on twitch-stats-streams carries a streams array -- the
     // batch-end marker sends only endConfig. streams-process tolerates that by
     // swallowing the error in its catch; this consumer's catch calls
@@ -152,38 +179,131 @@ export default class Missing {
     const user_ids: string[] = [];
     const game_ids: string[] = [];
     const game_hash = new Set<string>();
+    // keep the first sighting of each id so the kick path can hydrate straight
+    // from the listing without a second lookup
+    const byUser = new Map<string, Stream>();
+    const byGame = new Map<string, Stream>();
 
     for (let i = 0; i < streams.length; ++i) {
+      const s = streams[i];
       // Twitch injects a synthetic record into the live stream feed;
       // streams-process filters it too. Sending it to Helix is a 400, which
       // wedges this consumer retrying a deterministic failure forever.
-      if (streams[i].user_id === 'testDocumentId2') continue;
-      user_ids.push(streams[i].user_id);
+      if (s.user_id === 'testDocumentId2') continue;
+      if (!byUser.has(s.user_id)) {
+        user_ids.push(s.user_id);
+        byUser.set(s.user_id, s);
+      }
 
       // uncategorized streams report game_id '' - Helix rejects an empty id,
       // and streams-process stores those as game 0 rather than a real category
-      const gid = streams[i].game_id;
+      const gid = s.game_id;
       if (!gid || !/^\d+$/.test(gid)) continue;
       if (!game_hash.has(gid)) {
         game_ids.push(gid);
         game_hash.add(gid);
+        byGame.set(gid, s);
       }
     }
     if (user_ids.length === 0 && game_ids.length === 0) return;
 
-    const checked_user_ids = await this.checkIds(Prefix.user, user_ids);
-    const checked_game_ids = await this.checkIds(Prefix.game, game_ids);
+    const checked_user_ids = await this.checkIds(
+      platform,
+      Prefix.user,
+      user_ids
+    );
+    const checked_game_ids = await this.checkIds(
+      platform,
+      Prefix.game,
+      game_ids
+    );
     this.log.trace(
       {
+        platform,
         number_user: checked_user_ids.length,
         number_game: checked_game_ids.length,
       },
       'update length'
     );
-    await Promise.all([
-      this.updateUser(checked_user_ids),
-      this.updateGame(checked_game_ids),
-    ]);
+
+    if (platform === 'twitch') {
+      await Promise.all([
+        this.updateUser(checked_user_ids),
+        this.updateGame(checked_game_ids),
+      ]);
+      return;
+    }
+
+    await this.hydrateFromListing(
+      platform,
+      checked_user_ids.map((id) => byUser.get(id) as Stream),
+      checked_game_ids.map((id) => byGame.get(id) as Stream)
+    );
+  }
+
+  /**
+   * Hydrate dimension rows from the stream listing itself. Kick's
+   * /public/v2/livestreams response already carries the channel slug, the
+   * broadcaster's display name and avatar, and the category name and art, so
+   * unlike twitch there is nothing left to fetch - the rows are built from the
+   * message that triggered them and cost no API quota at all.
+   */
+  private async hydrateFromListing(
+    platform: Platform,
+    users: Stream[],
+    games: Stream[]
+  ): Promise<void> {
+    const time = new Date();
+
+    if (users.length > 0) {
+      const rows: StreamerRow[] = users.map((s) => ({
+        user_id: s.user_id,
+        login: s.user_login ?? s.user_name,
+        display_name: s.user_name,
+        // kick exposes neither of these; leave them empty rather than invent a
+        // value that would read as real data
+        type: '',
+        broadcaster_type: '',
+        // and it has no profile view count, so no views probe is written
+        view_count: 0,
+        profile_image: s.profile_image_url ?? '',
+      }));
+      this.log.debug(
+        { platform, count: rows.length },
+        'insert update streamers'
+      );
+      await insertUpdateStreamers(this.pool, platform, rows, time);
+      await this.insertIds(
+        this.valuesFromArray(
+          scoped(platform, Prefix.user),
+          rows.map((r) => r.user_id)
+        )
+      );
+      await this.redis.set(
+        scoped(platform, Prefix.user) + 'time',
+        time.toISOString()
+      );
+    }
+
+    if (games.length > 0) {
+      const rows: GameRow[] = games.map((s) => ({
+        game_id: s.game_id,
+        name: s.game_name,
+        box_art_url: s.game_box_art_url ?? '',
+      }));
+      this.log.debug({ platform, count: rows.length }, 'insert update games');
+      await insertUpdateGames(this.pool, platform, rows, time);
+      await this.insertIds(
+        this.valuesFromArray(
+          scoped(platform, Prefix.game),
+          rows.map((r) => r.game_id)
+        )
+      );
+      await this.redis.set(
+        scoped(platform, Prefix.game) + 'time',
+        time.toISOString()
+      );
+    }
   }
 
   public async updateUser(ids: string[]): Promise<void> {
@@ -206,8 +326,17 @@ export default class Missing {
         throw new Error('helix returned no data array for users');
       }
       this.log.debug({ count: users.data.length }, 'insert update streamers');
-      await insertUpdateStreamers(this.pool, users.data, time);
-      await insertViewsProbes(this.pool, users.data, time);
+      const rows: StreamerRow[] = users.data.map((u: User) => ({
+        user_id: u.id,
+        login: u.login,
+        display_name: u.display_name,
+        type: u.type,
+        broadcaster_type: u.broadcaster_type,
+        view_count: u.view_count,
+        profile_image: u.profile_image_url,
+      }));
+      await insertUpdateStreamers(this.pool, 'twitch', rows, time);
+      await insertViewsProbes(this.pool, 'twitch', rows, time);
       for (const u of users.data) found.push(u.id);
     }
 
@@ -215,9 +344,14 @@ export default class Missing {
     // id as known (deleted or banned users are simply omitted by Helix) would
     // suppress every future retry, and these keys have no TTL.
     if (found.length > 0) {
-      await this.insertIds(this.valuesFromArray(Prefix.user, found));
+      await this.insertIds(
+        this.valuesFromArray(scoped('twitch', Prefix.user), found)
+      );
     }
-    await this.redis.set(Prefix.user + 'time', time.toISOString());
+    await this.redis.set(
+      scoped('twitch', Prefix.user) + 'time',
+      time.toISOString()
+    );
   }
 
   public async updateGame(ids: string[]): Promise<void> {
@@ -240,13 +374,23 @@ export default class Missing {
         throw new Error('helix returned no data array for games');
       }
       this.log.debug({ count: games.data.length }, 'insert update games');
-      await insertUpdateGames(this.pool, games.data, time);
+      const rows: GameRow[] = games.data.map((g: Game) => ({
+        game_id: g.id,
+        name: g.name,
+        box_art_url: g.box_art_url,
+      }));
+      await insertUpdateGames(this.pool, 'twitch', rows, time);
       for (const g of games.data) found.push(g.id);
     }
 
     if (found.length > 0) {
-      await this.insertIds(this.valuesFromArray(Prefix.game, found));
+      await this.insertIds(
+        this.valuesFromArray(scoped('twitch', Prefix.game), found)
+      );
     }
-    await this.redis.set(Prefix.game + 'time', time.toISOString());
+    await this.redis.set(
+      scoped('twitch', Prefix.game) + 'time',
+      time.toISOString()
+    );
   }
 }

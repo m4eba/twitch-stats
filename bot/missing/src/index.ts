@@ -11,7 +11,7 @@ import {
   LogConfigOpt,
   defaultValues,
 } from '@twitch-stats/config';
-import { init, StreamsMessage } from '@twitch-stats/twitch';
+import { init, platformOf, StreamsMessage } from '@twitch-stats/twitch';
 import type { Pool } from 'pg';
 import { initPostgres } from '@twitch-stats/database';
 import { createClient } from 'redis';
@@ -90,7 +90,7 @@ await consumer.run({
           message.value.toString()
         ) as StreamsMessage;
         logger.debug({ message: msg }, 'msg received');
-        await missing.update(msg.streams);
+        await missing.update(platformOf(msg), msg.streams);
       }
     } catch (e) {
       logger.error({ error: e }, 'error in eachMessage');

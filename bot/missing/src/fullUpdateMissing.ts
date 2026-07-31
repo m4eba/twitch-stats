@@ -92,6 +92,7 @@ class Update {
         'check ids length'
       );
       const checked = await this.missing.checkIds(
+        'twitch',
         this.prefix,
         this.ids.slice(this.ids_offset, this.ids_length)
       );
@@ -160,7 +161,13 @@ const updateGame: Update = new Update(
 let rowCount: number = 0;
 const query = async (): Promise<void> => {
   const promise = new Promise<void>((resolve) => {
-    const query = new QueryStream('SELECT user_id,game_id from stream');
+    // twitch only: this job repairs the cache by re-fetching from helix, and
+    // kick rows are hydrated from the listing rather than from an API, so they
+    // cannot be rebuilt here. Without the predicate their ids would be sent to
+    // helix and simply come back empty.
+    const query = new QueryStream(
+      "SELECT user_id,game_id from stream WHERE platform = 'twitch'"
+    );
     const stream = client.query(query);
 
     stream.on('end', async () => {

@@ -1,11 +1,12 @@
 {
-  "name": "@twitch-stats/twitch",
-  "version": "0.0.16",
-  "main": "dist/index.js",
+  "name": "@twitch-stats/kick-streams",
+  "version": "0.0.14",
+  "bin": "dist/index.js",
   "license": "MIT",
   "type": "module",
   "scripts": {
     "build": "tsc",
+    "start": "node dist/index.js",
     "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "devDependencies": {
@@ -16,10 +17,11 @@
   },
   "dependencies": {
     "@twitch-stats/config": "*",
-    "@twurple/auth": "~5.0.18",
-    "abort-controller": "~3.0.0",
-    "node-fetch": "~3.2.0",
+    "@twitch-stats/kick": "*",
+    "@twitch-stats/twitch": "*",
+    "kafkajs": "~1.16.0",
     "pino": "~7.8.0",
+    "ts-command-line-args": "~2.2.1",
     "typescript": "^5.1.3"
   }
 }

@@ -1,17 +1,15 @@
 import {
   KafkaConfig,
-  TwitchConfig,
   PostgresConfig,
   KafkaConfigOpt,
   defaultValues,
-  TwitchConfigOpt,
   PostgresConfigOpt,
   FileConfig,
   FileConfigOpt,
   LogConfig,
   LogConfigOpt,
 } from '@twitch-stats/config';
-import { init, StreamsMessage } from '@twitch-stats/twitch';
+import { platformOf, StreamsMessage } from '@twitch-stats/twitch';
 import { initPostgres } from '@twitch-stats/database';
 import type { Pool } from 'pg';
 import pino, { Logger } from 'pino';
@@ -25,6 +23,21 @@ interface TopicConfig {
   streamEndedTopic: string;
 }
 
+// This service never calls Helix - it only reads kafka and writes postgres -
+// but it used to run the twitch OAuth handshake at boot anyway, so bad or
+// absent twitch credentials killed it on startup even when every message in
+// the topic was from another platform. The options are still accepted so
+// existing deployments that pass them keep working; they are simply unused.
+interface UnusedTwitchConfig {
+  twitchClientId?: string;
+  twitchClientSecret?: string;
+}
+
+const UnusedTwitchConfigOpt: ArgumentConfig<UnusedTwitchConfig> = {
+  twitchClientId: { type: String, optional: true },
+  twitchClientSecret: { type: String, optional: true },
+};
+
 const TopicConfigOpt: ArgumentConfig<TopicConfig> = {
   topic: { type: String, defaultValue: defaultValues.streamsTopic },
   streamIdTopic: { type: String, defaultValue: defaultValues.streamsIdTopic },
@@ -36,7 +49,7 @@ const TopicConfigOpt: ArgumentConfig<TopicConfig> = {
 
 interface Config
   extends KafkaConfig,
-    TwitchConfig,
+    UnusedTwitchConfig,
     PostgresConfig,
     FileConfig,
     LogConfig,
@@ -45,7 +58,7 @@ interface Config
 const config: Config = parse<Config>(
   {
     ...KafkaConfigOpt,
-    ...TwitchConfigOpt,
+    ...UnusedTwitchConfigOpt,
     ...TopicConfigOpt,
     ...PostgresConfigOpt,
     ...FileConfigOpt,
@@ -59,7 +72,6 @@ const config: Config = parse<Config>(
 const logger: Logger = pino({ level: config.logLevel }).child({
   module: 'streams-process',
 });
-await init(config);
 
 const pool: Pool = await initPostgres(config);
 
@@ -96,9 +108,12 @@ await consumer.run({
       const d = new Date(parseInt(message.timestamp));
       const msg = JSON.parse(message.value.toString()) as StreamsMessage;
 
-      await processing.processStreams(d, msg.streams);
+      // absent platform means twitch: raw messages archived before the field
+      // existed must keep replaying correctly
+      const platform = platformOf(msg);
+      await processing.processStreams(platform, d, msg.streams);
       if (msg.endConfig) {
-        await processing.processEnd(msg.endConfig);
+        await processing.processEnd(platform, msg.endConfig);
       }
 
       logger.flush();

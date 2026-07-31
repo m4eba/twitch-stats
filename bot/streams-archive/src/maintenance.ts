@@ -110,6 +110,12 @@ for (const table of TABLES) {
 // success - so ended-but-not-yet-archived streams must count too. Restricting
 // this to ended_at IS NULL let a lagging or crashed archiver have its probe
 // history dropped out from under it, archiving those streams with probe_count 0.
+//
+// Deliberately not scoped by platform. The history tables are partitioned on
+// "time" alone, so a single partition holds rows for every platform and
+// dropping it drops all of them. A per-platform cutoff would therefore discard
+// the other platform's probes. The cost is that one wedged platform holds
+// retention open for both, which is the safe direction to fail in.
 const live = await pool.query(
   'SELECT min(started_at) AS min_started FROM stream'
 );

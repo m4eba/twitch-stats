@@ -12,7 +12,10 @@ import QueryStream from 'pg-query-stream';
 import { createClient } from 'redis';
 import pino, { Logger } from 'pino';
 import { ArgumentConfig, parse } from 'ts-command-line-args';
-import Prefix from './prefix.js';
+import Prefix, { scoped } from './prefix.js';
+import type { Platform } from '@twitch-stats/twitch';
+
+const PLATFORMS: Platform[] = ['twitch', 'kick'];
 
 interface UpdateConfig {
   redisUrl: string;
@@ -72,9 +75,10 @@ const updateRedis = async (ids: string[]): Promise<void> => {
 const drainIds = async (
   sql: string,
   column: string,
-  prefix: string
+  prefix: string,
+  platform: string
 ): Promise<void> => {
-  const stream = client.query(new QueryStream(sql));
+  const stream = client.query(new QueryStream(sql, [platform]));
   let ids: string[] = [];
   for await (const chunk of stream) {
     const id = String(chunk[column]);
@@ -89,17 +93,27 @@ const drainIds = async (
   await updateRedis(ids);
 };
 
-const updateGames = (): Promise<void> =>
-  drainIds('SELECT game_id from game', 'game_id', Prefix.game);
+// Rebuild every platform's keys. The cache is keyed per platform because kick
+// and twitch ids overlap, so each has to be drained under its own prefix.
+for (const platform of PLATFORMS) {
+  count = 0;
+  await drainIds(
+    'SELECT user_id from streamers WHERE platform = $1',
+    'user_id',
+    scoped(platform, Prefix.user),
+    platform
+  );
+  logger.info({ platform, count }, 'streamer count');
 
-const updateStreamer = (): Promise<void> =>
-  drainIds('SELECT user_id from streamers', 'user_id', Prefix.user);
-
-await updateStreamer();
-logger.info({ count }, 'streamer count');
-count = 0;
-await updateGames();
-logger.info({ count }, 'game count');
+  count = 0;
+  await drainIds(
+    'SELECT game_id from game WHERE platform = $1',
+    'game_id',
+    scoped(platform, Prefix.game),
+    platform
+  );
+  logger.info({ platform, count }, 'game count');
+}
 count = 0;
 await redis.disconnect();
 await client.end();
