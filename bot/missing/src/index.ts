@@ -90,10 +90,7 @@ await consumer.run({
           message.value.toString()
         ) as StreamsMessage;
         logger.debug({ message: msg }, 'msg received');
-        // hydration goes through Helix, so kick batches are acked and dropped
-        // until a kick equivalent exists
-        if (platformOf(msg) !== 'twitch') return;
-        await missing.update(msg.streams);
+        await missing.update(platformOf(msg), msg.streams);
       }
     } catch (e) {
       logger.error({ error: e }, 'error in eachMessage');

@@ -27,6 +27,15 @@ export interface Stream {
   language: string;
   thumbnail_url: string;
   tags: Array<string>;
+
+  // Optional because the two sources differ in what a stream listing carries.
+  // Helix GET /streams returns user_login but no profile image and no box art,
+  // which is why bot/missing exists to fetch them. Kick's livestream payload
+  // already includes all three, so for kick these are populated at poll time
+  // and no second API call is needed to hydrate streamers/game.
+  user_login?: string;
+  profile_image_url?: string;
+  game_box_art_url?: string;
 }
 
 export interface Game {

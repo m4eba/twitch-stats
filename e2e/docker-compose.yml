@@ -36,6 +36,18 @@ services:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
 
+  # bot/missing dedupes hydration against redis, so the live check needs one
+  redis:
+    image: redis:7-alpine
+    profiles: ['live']
+    ports:
+      - '16379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
   kafka:
     image: apache/kafka:3.7.0
     profiles: ['live']

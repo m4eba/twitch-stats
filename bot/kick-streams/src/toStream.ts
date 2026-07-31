@@ -6,6 +6,11 @@ import type { Logger } from 'pino';
 // set lines up with Twitch's almost exactly; the only real differences are that
 // the livestream id is a UUID rather than a numeric id (hence the text
 // stream_id column) and that the category may be absent.
+//
+// The listing also carries the channel slug, the broadcaster's display name and
+// avatar, and the category name and art. Helix returns none of that from
+// GET /streams, so where twitch needs bot/missing to fetch it, kick gets it
+// free here.
 export function toStream(l: KickLivestream, logger: Logger): Stream | null {
   const started = Date.parse(l.started_at);
   if (Number.isNaN(started)) {
@@ -28,5 +33,8 @@ export function toStream(l: KickLivestream, logger: Logger): Stream | null {
     language: l.language_code,
     thumbnail_url: l.thumbnail,
     tags: l.tags ?? [],
+    user_login: l.channel?.slug ?? l.broadcaster_user.username,
+    profile_image_url: l.broadcaster_user.profile_picture,
+    game_box_art_url: l.category ? l.category.thumbnail : '',
   };
 }

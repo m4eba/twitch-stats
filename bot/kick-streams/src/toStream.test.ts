@@ -49,6 +49,9 @@ test('toStream maps a full livestream onto the normalized shape', () => {
     language: 'en',
     thumbnail_url: 'https://t/img.jpg',
     tags: ['a', 'b'],
+    user_login: 'streamer',
+    profile_image_url: 'p',
+    game_box_art_url: 'c',
   });
 });
 
@@ -76,4 +79,32 @@ test('toStream returns null and warns on an unparseable started_at', () => {
   const s = toStream(livestream({ started_at: 'not-a-date' }), stub.logger);
   assert.equal(s, null);
   assert.equal(stub.warnings(), 1);
+});
+
+test('toStream carries the dimension metadata kick gives us for free', () => {
+  const { logger } = stubLogger();
+  const s = toStream(livestream(), logger);
+  // these are what let bot/missing hydrate streamers/game with no API call
+  assert.equal(s?.user_login, 'streamer');
+  assert.equal(s?.profile_image_url, 'p');
+  assert.equal(s?.game_box_art_url, 'c');
+  assert.equal(s?.user_name, 'streamer');
+  assert.equal(s?.game_name, 'Just Chatting');
+});
+
+test('toStream falls back to the username when a channel has no slug', () => {
+  const { logger } = stubLogger();
+  const l = livestream();
+  delete (l as { channel?: unknown }).channel;
+  const s = toStream(l, logger);
+  assert.equal(s?.user_login, 'streamer');
+});
+
+test('toStream leaves box art empty for an uncategorized stream', () => {
+  const { logger } = stubLogger();
+  const l = livestream();
+  delete (l as { category?: unknown }).category;
+  const s = toStream(l, logger);
+  assert.equal(s?.game_id, '0');
+  assert.equal(s?.game_box_art_url, '');
 });

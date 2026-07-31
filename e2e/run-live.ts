@@ -281,6 +281,30 @@ async function main(): Promise<number> {
       { killAfterMs: 30000 }
     );
 
+    // bot/missing maintains the dimension tables. Twitch needs a helix
+    // round-trip for avatars and box art; kick's rows come straight off the
+    // listing, so this also proves the no-API-call path.
+    console.log('\n--- bot/missing (hydrating streamers + game) ---');
+    await run(
+      'bot/missing/dist/index.js',
+      [
+        '--twitchClientId',
+        twId ?? 'unused',
+        '--twitchClientSecret',
+        twSecret ?? 'unused',
+        '--kafkaBroker',
+        BROKER,
+        '--topic',
+        TOPIC,
+        '--redisUrl',
+        'redis://localhost:16379',
+        ...PG_ARGS,
+        '--logLevel',
+        'warn',
+      ],
+      { killAfterMs: 40000 }
+    );
+
     console.log('\n--- verifying postgres ---');
     const client = new pg.Client(PG);
     await client.connect();
@@ -375,12 +399,83 @@ async function main(): Promise<number> {
         );
       }
 
+      if (doKick) {
+        const s = await client.query(
+          `SELECT count(*)::int AS n,
+                  count(*) FILTER (WHERE profile_image <> '')::int AS img,
+                  count(*) FILTER (WHERE login <> '')::int AS login
+             FROM streamers WHERE platform = 'kick'`
+        );
+        check('kick streamers hydrated', s.rows[0].n > 0, `n=${s.rows[0].n}`);
+        check(
+          'kick streamers have avatars',
+          s.rows[0].img === s.rows[0].n,
+          `${s.rows[0].img}/${s.rows[0].n}`
+        );
+        check(
+          'kick streamers have slugs',
+          s.rows[0].login === s.rows[0].n,
+          `${s.rows[0].login}/${s.rows[0].n}`
+        );
+        const g = await client.query(
+          `SELECT count(*)::int AS n,
+                  count(*) FILTER (WHERE box_art_url <> '')::int AS art
+             FROM game WHERE platform = 'kick'`
+        );
+        check('kick categories hydrated', g.rows[0].n > 0, `n=${g.rows[0].n}`);
+        // Kick does ship the occasional category with an empty thumbnail, so
+        // this only has to catch the art being dropped on the floor entirely,
+        // not demand every row have one.
+        check(
+          'kick categories carry box art',
+          g.rows[0].art > g.rows[0].n * 0.9,
+          `${g.rows[0].art}/${g.rows[0].n}`
+        );
+      }
+      if (doTwitch) {
+        const s = await client.query(
+          "SELECT count(*)::int n FROM streamers WHERE platform = 'twitch'"
+        );
+        check('twitch streamers hydrated', s.rows[0].n > 0, `n=${s.rows[0].n}`);
+        const g = await client.query(
+          "SELECT count(*)::int n FROM game WHERE platform = 'twitch'"
+        );
+        check(
+          'twitch categories hydrated',
+          g.rows[0].n > 0,
+          `n=${g.rows[0].n}`
+        );
+      }
+      if (doKick && doTwitch) {
+        // the whole reason the redis keys had to be platform-scoped
+        const dupe = await client.query(
+          `SELECT count(*)::int n FROM (
+             SELECT user_id FROM streamers WHERE platform = 'kick'
+             INTERSECT
+             SELECT user_id FROM streamers WHERE platform = 'twitch') x`
+        );
+        console.log(
+          `  (streamer user_ids present on both platforms: ${dupe.rows[0].n})`
+        );
+      }
+
       const sample = await client.query(
         `SELECT platform, stream_id, user_id, title FROM stream
            ORDER BY platform, started_at DESC LIMIT 4`
       );
-      console.log('\nsample rows:');
+      console.log('\nsample streams:');
       for (const r of sample.rows) console.log(' ', JSON.stringify(r));
+      const who = await client.query(
+        `SELECT platform, user_id, login, display_name, left(profile_image, 48) AS profile_image
+           FROM streamers ORDER BY platform, user_id LIMIT 4`
+      );
+      console.log('sample streamers:');
+      for (const r of who.rows) console.log(' ', JSON.stringify(r));
+      const cats = await client.query(
+        `SELECT platform, game_id, name FROM game ORDER BY platform, game_id LIMIT 4`
+      );
+      console.log('sample categories:');
+      for (const r of cats.rows) console.log(' ', JSON.stringify(r));
     } finally {
       await client.end();
     }
