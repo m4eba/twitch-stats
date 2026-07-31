@@ -98,14 +98,14 @@ ALTER TABLE archive_stream ADD COLUMN platform text NOT NULL DEFAULT 'twitch';
 ALTER TABLE archive_stream DROP CONSTRAINT archive_stream_pkey;
 ALTER TABLE archive_stream ALTER COLUMN stream_id TYPE text;
 ALTER TABLE archive_stream ADD PRIMARY KEY (platform, stream_id);
-DROP INDEX IF EXISTS archive_stream_user_started_idx;
+DROP INDEX IF EXISTS archive_stream_user_idx;
 CREATE INDEX archive_stream_user_started_idx ON archive_stream (platform, user_id, started_at);
 
 ALTER TABLE stream_summary ADD COLUMN platform text NOT NULL DEFAULT 'twitch';
 ALTER TABLE stream_summary DROP CONSTRAINT stream_summary_pkey;
 ALTER TABLE stream_summary ALTER COLUMN stream_id TYPE text;
 ALTER TABLE stream_summary ADD PRIMARY KEY (platform, stream_id);
-DROP INDEX IF EXISTS stream_summary_user_started_idx;
+DROP INDEX IF EXISTS stream_summary_user_idx;
 CREATE INDEX stream_summary_user_started_idx ON stream_summary (platform, user_id, started_at);
 
 -- Force every writer to be explicit from here on.
@@ -124,5 +124,14 @@ ALTER TABLE stream_summary           ALTER COLUMN platform DROP DEFAULT;
 
 -- migrate:down
 
--- intentionally empty: reverting would have to pick one platform's rows to
--- keep and narrow stream_id back to bigint, which is lossy by construction
+-- Reverting is lossy by construction: it would have to pick one platform's rows
+-- to keep and narrow stream_id back to bigint. An empty down section is worse
+-- than none, because dbmate reports the rollback as successful and deletes the
+-- schema_migrations row, after which the next `up` fails with "column platform
+-- already exists" and the database is wedged. Fail loudly instead.
+DO $$
+BEGIN
+  RAISE EXCEPTION 'irreversible migration: platform column and stream_id text '
+    'widening cannot be rolled back without discarding data. Restore from a '
+    'backup instead.';
+END $$;

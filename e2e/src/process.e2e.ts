@@ -72,7 +72,11 @@ test('processEnd only ends streams of its own platform (load-bearing predicate)'
     'SELECT ended_at FROM stream WHERE platform = $1 AND stream_id = $2',
     ['kick', kick.id]
   );
-  assert.notEqual(twRow.rows[0].ended_at, null, 'twitch stream should be ended');
+  assert.notEqual(
+    twRow.rows[0].ended_at,
+    null,
+    'twitch stream should be ended'
+  );
   assert.equal(
     kickRow.rows[0].ended_at,
     null,
@@ -118,4 +122,34 @@ test('processEnd on an empty sweep publishes nothing and ends no streams', async
   // a no-op for streams-id and an empty ended list is a no-op for the archiver,
   // so neither message is worth sending.
   assert.deepEqual(sent, []);
+});
+
+test('processEnd scopes its UPDATE join when both platforms share a stream_id', async () => {
+  const { producer } = stubProducer();
+  const p = new Processing(log, pool, producer, 'stream-id', 'stream-ended');
+
+  // The other platform tests use distinct ids, which leaves the platform
+  // predicate on `UPDATE stream ... FROM (VALUES ...)` untested: without it the
+  // join matches on stream_id alone and ends both rows. Kick ids are UUIDs in
+  // practice so this exact collision is unlikely, but the join must not depend
+  // on that.
+  const shared = { id: '4242', user_id: '4242' };
+  await p.processStreams('twitch', T0, [sampleStream(shared)]);
+  await p.processStreams('kick', T0, [sampleStream(shared)]);
+
+  await p.processEnd('twitch', { updateStartTime: AFTER_T0, update: true });
+
+  const rows = await pool.query(
+    'SELECT platform, ended_at FROM stream WHERE stream_id = $1 ORDER BY platform',
+    [shared.id]
+  );
+  assert.equal(rows.rows.length, 2, 'both platforms should still have a row');
+  const kick = rows.rows.find((r) => r.platform === 'kick');
+  const twitch = rows.rows.find((r) => r.platform === 'twitch');
+  assert.notEqual(twitch?.ended_at, null, 'twitch row should be ended');
+  assert.equal(
+    kick?.ended_at,
+    null,
+    'kick row shares the stream_id and must not be ended by a twitch sweep'
+  );
 });
