@@ -14,10 +14,11 @@ import { metrics, startMetricsServer } from '@twitch-stats/utils';
 import type { Pool } from 'pg';
 import pino, { Logger } from 'pino';
 import { ArgumentConfig, parse } from 'ts-command-line-args';
-import { Archiver } from './archiver.js';
+import { Archiver, checkMaxAgeHours } from './archiver.js';
 
 interface ArchiveConfig {
   maxAgeHours: number;
+  allowShortMaxAge: boolean;
   sweepIntervalSeconds: number;
   batchSize: number;
   flushBytes: number;
@@ -26,9 +27,9 @@ interface ArchiveConfig {
 }
 
 const ArchiveConfigOpt: ArgumentConfig<ArchiveConfig> = {
-  // Twitch's 48h broadcast limit plus margin for end detection, which puts
-  // ended_at up to one crawl interval + 5 minutes past the last probe
+  // see MIN_MAX_AGE_HOURS
   maxAgeHours: { type: Number, defaultValue: 52 },
+  allowShortMaxAge: { type: Boolean, defaultValue: false },
   sweepIntervalSeconds: { type: Number, defaultValue: 15 * 60 },
   batchSize: { type: Number, defaultValue: 2000 },
   flushBytes: { type: Number, defaultValue: 64 * 1024 * 1024 },
@@ -59,6 +60,7 @@ const config: Config = parse<Config>(
 const logger: Logger = pino({ level: config.logLevel }).child({
   module: 'streams-archive',
 });
+checkMaxAgeHours(config.maxAgeHours, config.allowShortMaxAge);
 
 logger.info({ maxAgeHours: config.maxAgeHours }, 'starting');
 const pool: Pool = await initPostgres(config);
@@ -104,6 +106,13 @@ const lastSweep = new metrics.Gauge({
   name: 'twstats_archive_last_sweep_timestamp_seconds',
   help: 'unix time of the last completed archive sweep',
 });
+// The cutoff follows max(updated_at), so while streams-process is stalled
+// sweeps keep completing with 0 streams and lastSweep stays fresh. This is
+// what shows the stall.
+const dataLag = new metrics.Gauge({
+  name: 'twstats_archive_data_lag_seconds',
+  help: 'how far the newest stream.updated_at trailed the wall clock at the last sweep',
+});
 // Anything left in `stream` holds back partition retention in maintenance,
 // which can only log about it; alert on this instead. Expected to stay near
 // maxAgeHours while sweeps succeed.
@@ -137,6 +146,8 @@ function sleep(ms: number): Promise<void> {
 
 async function runSweep(): Promise<void> {
   const cutoff = await archiver.sweepCutoff(config.maxAgeHours);
+  const dataTime = cutoff.getTime() + config.maxAgeHours * 3600 * 1000;
+  dataLag.set(Math.max(0, Date.now() - dataTime) / 1000);
   const count = await archiver.sweep(cutoff, {
     batchSize: config.batchSize,
     flushBytes: config.flushBytes,

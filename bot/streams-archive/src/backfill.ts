@@ -16,10 +16,11 @@ import { initS3 } from '@twitch-stats/storage';
 import type { Pool } from 'pg';
 import pino, { Logger } from 'pino';
 import { ArgumentConfig, parse } from 'ts-command-line-args';
-import { Archiver } from './archiver.js';
+import { Archiver, checkMaxAgeHours } from './archiver.js';
 
 interface BackfillConfig {
   maxAgeHours: number;
+  allowShortMaxAge: boolean;
   batchSize: number;
   flushBytes: number;
   keyPrefix: string;
@@ -27,6 +28,7 @@ interface BackfillConfig {
 
 const BackfillConfigOpt: ArgumentConfig<BackfillConfig> = {
   maxAgeHours: { type: Number, defaultValue: 52 },
+  allowShortMaxAge: { type: Boolean, defaultValue: false },
   batchSize: { type: Number, defaultValue: 2000 },
   flushBytes: { type: Number, defaultValue: 64 * 1024 * 1024 },
   keyPrefix: { type: String, defaultValue: 'archive/' },
@@ -55,6 +57,7 @@ const config: Config = parse<Config>(
 const logger: Logger = pino({ level: config.logLevel }).child({
   module: 'streams-archive-backfill',
 });
+checkMaxAgeHours(config.maxAgeHours, config.allowShortMaxAge);
 
 const pool: Pool = await initPostgres(config);
 const s3 = initS3(config);

@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import type { Pool } from 'pg';
 import type { Logger } from 'pino';
 import type { S3Client } from '@aws-sdk/client-s3';
-import { Archiver } from './archiver.js';
+import { Archiver, checkMaxAgeHours } from './archiver.js';
 
 interface Call {
   text: string;
@@ -86,6 +86,28 @@ const log = {
   error: () => undefined,
   debug: () => undefined,
 } as unknown as Logger;
+
+describe('checkMaxAgeHours', () => {
+  it('accepts the default and anything past the longest broadcast', () => {
+    checkMaxAgeHours(52, false);
+    checkMaxAgeHours(51, false);
+  });
+
+  it('refuses ages that could archive live streams', () => {
+    assert.throws(() => checkMaxAgeHours(6, false), /allowShortMaxAge/);
+    assert.throws(() => checkMaxAgeHours(50.9, false), /allowShortMaxAge/);
+  });
+
+  it('allows short ages only when explicitly requested', () => {
+    checkMaxAgeHours(1, true);
+    checkMaxAgeHours(0, true);
+  });
+
+  it('rejects nonsense even with the override', () => {
+    assert.throws(() => checkMaxAgeHours(NaN, true), /invalid/);
+    assert.throws(() => checkMaxAgeHours(-1, true), /invalid/);
+  });
+});
 
 describe('Archiver.sweepCutoff', () => {
   it('measures maxAgeHours back from the newest data', async () => {
