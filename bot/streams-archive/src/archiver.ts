@@ -39,6 +39,25 @@ interface SummaryRow {
 const SELECT_BATCH = 500;
 const INSERT_BATCH = 5000;
 
+// Twitch ends broadcasts after 48h, but ended_at lands up to a crawl interval
+// + 5 minutes past the last probe; the longest stream seen in production was
+// 50.4h. Archiving earlier deletes streams that can still come back.
+export const MIN_MAX_AGE_HOURS = 51;
+
+export function checkMaxAgeHours(
+  maxAgeHours: number,
+  allowShortMaxAge: boolean
+): void {
+  if (!Number.isFinite(maxAgeHours) || maxAgeHours < 0) {
+    throw new Error(`invalid --maxAgeHours ${maxAgeHours}`);
+  }
+  if (maxAgeHours < MIN_MAX_AGE_HOURS && !allowShortMaxAge) {
+    throw new Error(
+      `--maxAgeHours ${maxAgeHours} is below ${MIN_MAX_AGE_HOURS} and would archive streams that may still be live; pass --allowShortMaxAge to override (local testing only)`
+    );
+  }
+}
+
 export interface SweepOptions {
   batchSize: number;
   flushBytes: number;

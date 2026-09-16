@@ -33,7 +33,7 @@ node ../bot/streams-archive/dist/index.js \
   --pgHost localhost --pgPort 5447 --pgDatabase tw_stats \
   --pgUser postgres --pgPassword password \
   --s3Endpoint http://localhost:9008 --s3Bucket twstats-archive \
-  --maxAgeHours 1
+  --maxAgeHours 1 --allowShortMaxAge
 
 # check results: range GETs against minio, summaries, hot-store deletes
 node verify.mjs
