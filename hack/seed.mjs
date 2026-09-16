@@ -3,7 +3,8 @@
 //   run2 (t-10m): alice changes title+game, viewers move
 //   run3 (t-0):   carol gone -> ended
 //   run4 (t+10s): bob gone   -> ended
-// Leaves alice live; bob and carol should end up in the archive.
+// alice started 25m ago, bob and carol 2h ago: with --maxAgeHours 1 bob and
+// carol end up in the archive and alice stays in the hot store.
 import { Kafka } from 'kafkajs';
 
 const broker = process.env.KAFKA_BROKER ?? 'localhost:19000';
@@ -16,7 +17,7 @@ await producer.connect();
 const now = Date.now();
 const min = 60 * 1000;
 
-function stream(id, user_id, user_name, title, game_id, viewer_count, tags) {
+function stream(id, user_id, user_name, title, game_id, viewer_count, tags, startedMinAgo = 25) {
   return {
     id,
     user_id,
@@ -26,7 +27,7 @@ function stream(id, user_id, user_name, title, game_id, viewer_count, tags) {
     type: 'live',
     title,
     viewer_count,
-    started_at: new Date(now - 25 * min).toISOString(),
+    started_at: new Date(now - startedMinAgo * min).toISOString(),
     language: 'en',
     thumbnail_url: '',
     tags,
@@ -59,8 +60,8 @@ async function run(time, streams, endConfig) {
 }
 
 const alice = () => stream('1001', '101', 'alice', 'building stuff', '509658', 10, ['en', 'dev']);
-const bob = () => stream('1002', '102', 'bob', 'speedrun', '33214', 50, ['en']);
-const carol = () => stream('1003', '103', 'carol', 'chatting', '509658', 100, ['en', 'chat']);
+const bob = () => stream('1002', '102', 'bob', 'speedrun', '33214', 50, ['en'], 120);
+const carol = () => stream('1003', '103', 'carol', 'chatting', '509658', 100, ['en', 'chat'], 120);
 
 const t1 = now - 20 * min;
 await run(t1, [alice(), bob(), carol()], {

@@ -1,4 +1,4 @@
-import type { Pool, PoolClient } from 'pg';
+import type { Pool, PoolClient, QueryResult } from 'pg';
 import type { Logger } from 'pino';
 import type { S3Client } from '@aws-sdk/client-s3';
 import { ChunkBuffer, chunkKey, putChunk } from '@twitch-stats/storage';
@@ -12,7 +12,6 @@ interface StreamRow {
   game_id: string;
   started_at: Date;
   ended_at: Date;
-  updated_at: Date | null;
 }
 
 interface IndexRow {
@@ -39,6 +38,19 @@ interface SummaryRow {
 
 const SELECT_BATCH = 500;
 const INSERT_BATCH = 5000;
+
+export interface SweepOptions {
+  batchSize: number;
+  flushBytes: number;
+  // checked between batches; the buffer is still flushed when it returns true
+  shouldStop?: () => boolean;
+  onFlush?: (streams: number, bytes: number) => void;
+}
+
+interface SweepRow {
+  stream_id: string;
+  started_at: Date;
+}
 
 export class Archiver {
   private log: Logger;
@@ -77,22 +89,90 @@ export class Archiver {
     return this.buffer.ageMs;
   }
 
-  // fetch history for the given streams and add one document per stream
-  // to the buffer; streams that resumed (ended_at cleared) or are already
-  // gone are skipped
-  public async collect(streamIds: string[]): Promise<number> {
+  // Streams are archived by age, not by end detection. Twitch ends every
+  // broadcast after 48h and never reuses a stream_id, so a row that started
+  // maxAgeHours ago can no longer change. ended_at cannot be trusted before
+  // that: streams-process revises it every crawl (a low-viewer stream flips
+  // between ended and live), and archiving on it deleted live streams and left
+  // rows behind that nothing would ever end.
+  //
+  // The cutoff is measured from the newest data rather than the wall clock, so
+  // a stalled streams-process pauses archiving instead of archiving streams
+  // whose probes have not been written yet.
+  public async sweepCutoff(maxAgeHours: number): Promise<Date> {
+    const result = await this.pool.query<{ cutoff: Date }>(
+      "SELECT least(now(), max(updated_at)) - $1::double precision * interval '1 hour' AS cutoff FROM stream",
+      [maxAgeHours]
+    );
+    return result.rows[0].cutoff;
+  }
+
+  // archive every stream that started before cutoff, flushing whenever the
+  // buffer reaches flushBytes and once at the end; returns the stream count
+  public async sweep(cutoff: Date, opts: SweepOptions): Promise<number> {
+    // Keyset pagination on (started_at, stream_id): rows only leave `stream`
+    // on flush, so without a cursor the same batch would be selected again.
+    // Helix reports started_at in whole seconds, so the millisecond JS Date
+    // cursor round-trips exactly.
+    let afterStartedAt: Date | string = '-infinity';
+    let afterStreamId = '0';
+    let total = 0;
+    while (!opts.shouldStop?.()) {
+      const result: QueryResult<SweepRow> = await this.pool.query<SweepRow>(
+        `SELECT stream_id, started_at FROM stream
+          WHERE started_at < $1
+            AND (started_at, stream_id) > ($2::timestamptz, $3::bigint)
+          ORDER BY started_at, stream_id LIMIT $4`,
+        [cutoff, afterStartedAt, afterStreamId, opts.batchSize]
+      );
+      if (result.rows.length === 0) break;
+      const last: SweepRow = result.rows[result.rows.length - 1];
+      afterStartedAt = last.started_at;
+      afterStreamId = last.stream_id;
+
+      total += await this.collect(
+        result.rows.map((r) => r.stream_id),
+        cutoff
+      );
+      if (this.bufferedBytes >= opts.flushBytes) {
+        await this.flushReporting(opts);
+      }
+    }
+    await this.flushReporting(opts);
+    return total;
+  }
+
+  private async flushReporting(opts: SweepOptions): Promise<void> {
+    const bytes = this.bufferedBytes;
+    const count = await this.flush();
+    if (count > 0) opts.onFlush?.(count, bytes);
+  }
+
+  // fetch history for the given streams and add one document per stream to
+  // the buffer; streams that started after cutoff or are already gone are
+  // skipped
+  public async collect(streamIds: string[], cutoff: Date): Promise<number> {
     let collected = 0;
     for (let i = 0; i < streamIds.length; i += SELECT_BATCH) {
       const chunk = streamIds.slice(i, i + SELECT_BATCH);
-      collected += await this.collectChunk(chunk);
+      collected += await this.collectChunk(chunk, cutoff);
     }
     return collected;
   }
 
-  private async collectChunk(streamIds: string[]): Promise<number> {
+  private async collectChunk(
+    streamIds: string[],
+    cutoff: Date
+  ): Promise<number> {
+    // A row still marked live this long after it started was never seen
+    // ending (its user_online row is gone); its last sighting is the best end
+    // time there is.
     const streams = await this.pool.query<StreamRow>(
-      'SELECT * FROM stream WHERE stream_id = ANY($1::bigint[]) AND ended_at IS NOT NULL',
-      [streamIds]
+      `SELECT stream_id, user_id, title, tags, game_id, started_at,
+              COALESCE(ended_at, updated_at, started_at) AS ended_at
+         FROM stream
+        WHERE stream_id = ANY($1::bigint[]) AND started_at < $2`,
+      [streamIds, cutoff]
     );
     if (streams.rows.length === 0) return 0;
     const ids = streams.rows.map((s) => s.stream_id);
@@ -248,11 +328,9 @@ export class Archiver {
             r.length,
           ]
         );
-        // A stream_id can legitimately reach the archiver twice (a stream that
-        // resurrected after being collected, then ended again). DO NOTHING kept
-        // the older, shorter document indexed while the delete below still ran,
-        // stranding the newer one in S3 with nothing pointing at it. Keep
-        // whichever incarnation ended last.
+        // A stream_id can legitimately be archived twice (a replayed crawl
+        // message re-inserting a row that was already archived). Keep whichever
+        // incarnation ended last, so the complete document stays indexed.
         insert.text += ` ON CONFLICT (stream_id) DO UPDATE SET
              user_id = EXCLUDED.user_id,
              started_at = EXCLUDED.started_at,
@@ -294,24 +372,15 @@ export class Archiver {
            WHERE EXCLUDED.ended_at >= stream_summary.ended_at`;
         await client.query(insert);
       }
-      // collectChunk() checked ended_at, but that was up to flushIntervalSeconds
-      // ago and streams-process clears ended_at whenever a stream comes back.
-      // Without this guard a stream that resurrected in the meantime is deleted
-      // while it is still live, and the archive claims it ended at the old time.
-      const deleted = await client.query<{ stream_id: string }>(
-        'DELETE FROM stream WHERE stream_id = ANY($1::bigint[]) AND ended_at IS NOT NULL RETURNING stream_id',
+      // no ended_at guard: every collected stream is past the maximum
+      // broadcast length, so none of them can still be live
+      await client.query(
+        'DELETE FROM stream WHERE stream_id = ANY($1::bigint[])',
         [archivedIds]
       );
-      const deletedIds = deleted.rows.map((r) => r.stream_id);
-      if (deletedIds.length !== archivedIds.length) {
-        this.log.warn(
-          { archived: archivedIds.length, deleted: deletedIds.length },
-          'some archived streams went live again and were kept'
-        );
-      }
       await client.query(
         'DELETE FROM user_online WHERE stream_id = ANY($1::bigint[])',
-        [deletedIds]
+        [archivedIds]
       );
       await client.query('COMMIT');
     } catch (e) {

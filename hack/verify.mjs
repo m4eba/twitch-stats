@@ -75,6 +75,13 @@ if (archivedStillHot.rows.length > 0) {
   failed = true;
 }
 
+// only streams older than maxAgeHours are archived: alice (1001) stays hot
+const archivedIds = idx.rows.map((r) => r.stream_id).join(',');
+if (archivedIds !== '1002,1003') {
+  console.error(`FAIL: expected 1002,1003 archived, got ${archivedIds}`);
+  failed = true;
+}
+
 await pool.end();
 if (failed) process.exit(1);
 console.log('verify OK');
