@@ -26,14 +26,14 @@ node ../bot/streams-process/dist/index.js \
   --pgHost localhost --pgPort 5447 --pgDatabase tw_stats \
   --pgUser postgres --pgPassword password
 
-# archive the ended streams. Ctrl-C after the 'flushed' log line.
+# archive streams older than maxAgeHours (bob and carol started 2h ago,
+# alice 25m ago). Ctrl-C after the 'sweep done' log line.
 AWS_ACCESS_KEY_ID=minioadmin AWS_SECRET_ACCESS_KEY=minioadmin \
 node ../bot/streams-archive/dist/index.js \
-  --kafkaBroker localhost:19000 \
   --pgHost localhost --pgPort 5447 --pgDatabase tw_stats \
   --pgUser postgres --pgPassword password \
   --s3Endpoint http://localhost:9008 --s3Bucket twstats-archive \
-  --graceSeconds 0 --flushIntervalSeconds 5
+  --maxAgeHours 1
 
 # check results: range GETs against minio, summaries, hot-store deletes
 node verify.mjs

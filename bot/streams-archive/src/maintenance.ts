@@ -1,8 +1,8 @@
 // Partition maintenance for the day-partitioned history tables: creates
 // partitions daysAhead into the future and drops partitions older than
-// retentionDays. A partition is never dropped while a still-live stream
+// retentionDays. A partition is never dropped while an unarchived stream
 // started before its upper bound (its probes would be lost before archiving);
-// *_legacy partitions are never touched (dropped manually after backfill).
+// see planRetention.
 import {
   PostgresConfig,
   PostgresConfigOpt,
@@ -15,6 +15,7 @@ import { initPostgres } from '@twitch-stats/database';
 import type { Pool } from 'pg';
 import pino, { Logger } from 'pino';
 import { ArgumentConfig, parse } from 'ts-command-line-args';
+import { Partition, planRetention, retentionCutoff } from './retention.js';
 
 interface MaintenanceConfig {
   daysAhead: number;
@@ -59,11 +60,6 @@ function utcDay(offsetDays: number): string {
   return d.toISOString().substring(0, 10);
 }
 
-interface Partition {
-  name: string;
-  upper: Date | null;
-}
-
 async function partitionsOf(table: string): Promise<Partition[]> {
   const result = await pool.query(
     `SELECT c.relname AS name, pg_get_expr(c.relpartbound, c.oid) AS bound
@@ -105,38 +101,41 @@ for (const table of TABLES) {
   logger.info({ table, created }, 'partitions ensured');
 }
 
-// The oldest stream still in the hot store limits what can be dropped. Every
-// row left in `stream` is by definition unarchived - the archiver deletes on
-// success - so ended-but-not-yet-archived streams must count too. Restricting
-// this to ended_at IS NULL let a lagging or crashed archiver have its probe
-// history dropped out from under it, archiving those streams with probe_count 0.
-const live = await pool.query(
-  'SELECT min(started_at) AS min_started FROM stream'
+interface OldestStream {
+  stream_id: string;
+  started_at: Date;
+  updated_at: Date | null;
+  ended_at: Date | null;
+}
+
+const oldest = await pool.query<OldestStream>(
+  'SELECT stream_id, started_at, updated_at, ended_at FROM stream ORDER BY started_at LIMIT 1'
 );
-const minLiveStarted: Date | null = live.rows[0].min_started;
+const oldestStream: OldestStream | undefined = oldest.rows[0];
+const retention = retentionCutoff(new Date(), config.retentionDays);
 
-const retentionCutoff = new Date();
-retentionCutoff.setUTCHours(0, 0, 0, 0);
-retentionCutoff.setUTCDate(retentionCutoff.getUTCDate() - config.retentionDays);
-const cutoff =
-  minLiveStarted !== null && minLiveStarted < retentionCutoff
-    ? minLiveStarted
-    : retentionCutoff;
-
+let kept = 0;
 for (const table of TABLES) {
-  for (const part of await partitionsOf(table)) {
-    if (part.name.endsWith('_legacy')) continue;
-    if (part.upper === null) continue;
-    if (part.upper <= cutoff) {
-      await pool.query(`DROP TABLE ${part.name}`);
-      logger.info({ table, partition: part.name }, 'partition dropped');
-    } else if (part.upper <= retentionCutoff) {
-      logger.warn(
-        { table, partition: part.name, minLiveStarted },
-        'partition kept, long-running live stream overlaps it'
-      );
-    }
+  const plan = planRetention(
+    await partitionsOf(table),
+    retention,
+    oldestStream?.started_at ?? null
+  );
+  for (const part of plan.drop) {
+    await pool.query(`DROP TABLE ${part.name}`);
+    logger.info({ table, partition: part.name }, 'partition dropped');
   }
+  kept += plan.kept.length;
+}
+
+// One warning per run rather than per partition, naming the row responsible.
+// While the archiver sweeps, the oldest stream is never older than its
+// maxAgeHours, so this means archiving is stuck.
+if (kept > 0 && oldestStream !== undefined) {
+  logger.warn(
+    { ...oldestStream, partitionsKept: kept, retentionCutoff: retention },
+    'retention blocked by an unarchived stream, partitions kept'
+  );
 }
 
 await pool.end();
